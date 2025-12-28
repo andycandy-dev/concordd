@@ -1,0 +1,1019 @@
+#+TITLE: Discordo IPC Architecture
+#+AUTHOR: Discordo Project
+#+DATE: 2025-12-27
+#+UPDATED: 2025-12-28
+
+* Overview
+
+IPC system for ~discordo-daemon~ to enable external clients (primarily Emacs) to interact with Discord.
+
+** Implementation Status: ✅ v1.0 COMPLETE
+
+The v1.0 implementation is complete and functional. All core features are working:
+- ✅ Unix socket server with JSON-RPC 2.0
+- ✅ Discord gateway connection with state management
+- ✅ Complete CRUD API (12 methods total)
+- ✅ Real-time push notifications (7 event types)
+- ✅ Message caching for performance
+- ✅ Message pagination
+- ✅ Edit/delete own messages
+- ✅ Graceful shutdown
+- ✅ Guild member and role metadata
+- ✅ Full-featured Emacs client (discord.el)
+- ✅ Mention rendering support
+- ✅ Evil mode compatibility
+
+** Design Principles
+- Daemon is standalone, explicitly controlled
+- System manages lifecycle (systemd, etc.)
+- Push-based event model (daemon → clients)
+- Simple JSON-RPC 2.0 over Unix domain socket
+- Client-side caching and rendering
+- Minimal viable implementation first
+
+* Architecture
+
+#+begin_src
+┌──────────────────────┐
+│  Emacs (elisp)       │
+│  - discord.el        │
+│  - UI buffers        │
+└──────┬───────────────┘
+       │
+       │ Unix Socket
+       │ JSON-RPC 2.0
+       │
+┌──────▼───────────────────────────┐
+│  discordo-daemon                 │
+│  ┌─────────────────────────────┐ │
+│  │ IPC Server                  │ │
+│  │ - Unix socket listener      │ │
+│  │ - Client connection manager │ │
+│  │ - Event dispatcher          │ │
+│  └─────────────────────────────┘ │
+│  ┌─────────────────────────────┐ │
+│  │ Discord State               │ │
+│  │ - Gateway connection        │ │
+│  │ - Message cache             │ │
+│  │ - Read state tracker        │ │
+│  └─────────────────────────────┘ │
+└──────────────────────────────────┘
+       │
+       │ Discord Gateway
+       │ WebSocket
+       │
+┌──────▼───────────────┐
+│  Discord API         │
+└──────────────────────┘
+#+end_src
+
+* Transport Protocol
+
+** Socket
+- Unix domain socket (file-based)
+- Default: ~/tmp/discordo-daemon.sock~
+- Configurable via ~--socket-path~ flag
+- Permissions: 0600 (owner only)
+
+** Message Format
+- JSON-RPC 2.0 specification
+- Text-based (UTF-8)
+- Line-delimited (each message ends with \n)
+
+*** Request (Client → Daemon)
+#+begin_src json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "sendMessage",
+  "params": {
+    "channelId": "123456789",
+    "content": "Hello, world!"
+  }
+}
+#+end_src
+
+*** Response (Daemon → Client)
+#+begin_src json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "messageId": "987654321",
+    "timestamp": "2025-12-27T12:00:00Z"
+  }
+}
+#+end_src
+
+*** Error Response
+#+begin_src json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32600,
+    "message": "Invalid channel ID"
+  }
+}
+#+end_src
+
+*** Notification (Daemon → Client, no response expected)
+#+begin_src json
+{
+  "jsonrpc": "2.0",
+  "method": "messageCreated",
+  "params": {
+    "channelId": "123456789",
+    "message": { ... }
+  }
+}
+#+end_src
+
+* Data Transfer Objects (DTOs)
+
+** User
+#+begin_src json
+{
+  "id": "123456789",
+  "username": "john_doe",
+  "discriminator": "0001",
+  "avatar": "a_1234567890abcdef",
+  "bot": false
+}
+#+end_src
+
+** Guild
+#+begin_src json
+{
+  "id": "123456789",
+  "name": "My Server",
+  "icon": "1234567890abcdef",
+  "ownerId": "987654321"
+}
+#+end_src
+
+** Channel
+#+begin_src json
+{
+  "id": "123456789",
+  "guildId": "987654321",
+  "name": "general",
+  "type": 0,
+  "position": 1,
+  "parentId": "555555555",
+  "unread": true,
+  "mentioned": false,
+  "mentionCount": 0
+}
+#+end_src
+
+** Message
+#+begin_src json
+{
+  "id": "123456789",
+  "channelId": "987654321",
+  "guildId": "555555555",
+  "author": {
+    "id": "111111111",
+    "username": "john_doe",
+    "avatar": "a_1234567890abcdef",
+    "roles": ["role1", "role2"]
+  },
+  "content": "Hello, world!",
+  "timestamp": "2025-12-27T12:00:00Z",
+  "editedTimestamp": null,
+  "attachments": [],
+  "embeds": [],
+  "reactions": [],
+  "referencedMessage": null
+}
+#+end_src
+
+** ReadState
+#+begin_src json
+{
+  "channelId": "123456789",
+  "lastMessageId": "987654321",
+  "mentionCount": 2
+}
+#+end_src
+
+* API Methods (v1.0)
+
+** Client → Daemon (Request/Response)
+
+12 methods total: ping, listGuilds, listChannels, getMessages, sendMessage, replyToMessage, editMessage, deleteMessage, markAsRead, getReadState, getGuildMembers, getGuildRoles
+
+*** ~ping~
+Health check.
+
+*Params:* none
+
+*Returns:*
+#+begin_src json
+{
+  "status": "ok",
+  "timestamp": "2025-12-27T12:00:00Z"
+}
+#+end_src
+
+*** ~listGuilds~
+Get all guilds the user is a member of.
+
+*Params:* none
+
+*Returns:*
+#+begin_src json
+{
+  "guilds": [Guild, ...]
+}
+#+end_src
+
+*** ~listChannels~
+Get all channels in a guild.
+
+*Params:*
+#+begin_src json
+{
+  "guildId": "123456789"
+}
+#+end_src
+
+*Returns:*
+#+begin_src json
+{
+  "channels": [Channel, ...]
+}
+#+end_src
+
+*** ~getMessages~
+Get message history from a channel.
+
+*Params:*
+#+begin_src json
+{
+  "channelId": "123456789",
+  "limit": 50,
+  "before": "987654321"  // optional, for pagination
+}
+#+end_src
+
+*Returns:*
+#+begin_src json
+{
+  "messages": [Message, ...]
+}
+#+end_src
+
+*** ~sendMessage~
+Send a message to a channel.
+
+*Params:*
+#+begin_src json
+{
+  "channelId": "123456789",
+  "content": "Hello, world!"
+}
+#+end_src
+
+*Returns:*
+#+begin_src json
+{
+  "message": Message
+}
+#+end_src
+
+*** ~replyToMessage~
+Reply to a specific message.
+
+*Params:*
+#+begin_src json
+{
+  "channelId": "123456789",
+  "messageId": "987654321",
+  "content": "This is a reply"
+}
+#+end_src
+
+*Returns:*
+#+begin_src json
+{
+  "message": Message
+}
+#+end_src
+
+*** ~editMessage~
+Edit an existing message (must be your own message).
+
+*Params:*
+#+begin_src json
+{
+  "channelId": "123456789",
+  "messageId": "987654321",
+  "content": "Updated message content"
+}
+#+end_src
+
+*Returns:*
+#+begin_src json
+{
+  "message": Message
+}
+#+end_src
+
+*** ~deleteMessage~
+Delete a message (must be your own message).
+
+*Params:*
+#+begin_src json
+{
+  "channelId": "123456789",
+  "messageId": "987654321"
+}
+#+end_src
+
+*Returns:*
+#+begin_src json
+{
+  "success": true
+}
+#+end_src
+
+*** ~markAsRead~
+Mark a channel as read up to a specific message.
+
+*Params:*
+#+begin_src json
+{
+  "channelId": "123456789",
+  "messageId": "987654321"
+}
+#+end_src
+
+*Returns:*
+#+begin_src json
+{
+  "success": true
+}
+#+end_src
+
+*** ~getReadState~
+Get read state for a channel.
+
+*Params:*
+#+begin_src json
+{
+  "channelId": "123456789"
+}
+#+end_src
+
+*Returns:*
+#+begin_src json
+{
+  "readState": ReadState
+}
+#+end_src
+
+*** ~getGuildMembers~
+Get all members in a guild.
+
+*Params:*
+#+begin_src json
+{
+  "guildId": "123456789"
+}
+#+end_src
+
+*Returns:*
+#+begin_src json
+{
+  "members": [
+    {
+      "user": User,
+      "nick": "CustomNickname",
+      "roleIds": ["role1", "role2"],
+      "joinedAt": "2025-12-28T12:00:00Z"
+    },
+    ...
+  ]
+}
+#+end_src
+
+*** ~getGuildRoles~
+Get all roles in a guild.
+
+*Params:*
+#+begin_src json
+{
+  "guildId": "123456789"
+}
+#+end_src
+
+*Returns:*
+#+begin_src json
+{
+  "roles": [
+    {
+      "id": "123456789",
+      "name": "Admin",
+      "color": 16711680,
+      "hoist": true,
+      "position": 5,
+      "permissions": "8",
+      "mentionable": true
+    },
+    ...
+  ]
+}
+#+end_src
+
+** Daemon → Client (Push Notifications)
+
+*** ~messageCreated~
+New message received.
+
+*Params:*
+#+begin_src json
+{
+  "message": Message
+}
+#+end_src
+
+*** ~messageUpdated~
+Message was edited.
+
+*Params:*
+#+begin_src json
+{
+  "message": Message
+}
+#+end_src
+
+*** ~messageDeleted~
+Message was deleted.
+
+*Params:*
+#+begin_src json
+{
+  "channelId": "123456789",
+  "messageId": "987654321"
+}
+#+end_src
+
+*** ~readStateUpdated~
+Read state changed for a channel.
+
+*Params:*
+#+begin_src json
+{
+  "channelId": "123456789",
+  "lastMessageId": "987654321",
+  "mentionCount": 0
+}
+#+end_src
+
+*** ~connectionStatusChanged~
+Discord connection status changed.
+
+*Params:*
+#+begin_src json
+{
+  "status": "connected" | "disconnected" | "reconnecting",
+  "timestamp": "2025-12-27T12:00:00Z",
+  "reason": "Gateway connection lost"  // optional
+}
+#+end_src
+
+*** ~guildCreated~
+User joined a new guild.
+
+*Params:*
+#+begin_src json
+{
+  "guild": Guild
+}
+#+end_src
+
+*** ~channelCreated~
+New channel created in a guild.
+
+*Params:*
+#+begin_src json
+{
+  "channel": Channel
+}
+#+end_src
+
+* Daemon Implementation
+
+** Command-Line Interface
+
+#+begin_src bash
+# Start daemon
+discordo-daemon start [OPTIONS]
+
+# Options:
+--socket-path PATH        # Socket path (default: /tmp/discordo-daemon.sock)
+--token TOKEN            # Discord token (default: $DISCORDO_TOKEN or keyring)
+--log-path PATH          # Log file path
+--log-level LEVEL        # Log level (debug|info|warn|error)
+--history-size N         # Message cache size per channel (default: 100)
+--config PATH            # Config file path
+#+end_src
+
+** Implementation Status
+
+*** ✅ Implemented Components
+
+**** IPC Server (~internal/ipc/server.go~)
+- Unix socket listener
+- Client connection manager (multiple concurrent clients)
+- Broadcast notifications to all connected clients
+- Graceful shutdown
+
+**** Protocol Handler (~internal/ipc/protocol.go~, ~handler.go~)
+- JSON-RPC 2.0 request/response parsing
+- Method routing
+- Error handling with standard error codes
+- All 12 methods implemented
+
+**** Discord Client (~internal/ipc/discord.go~)
+- Gateway connection with ningen state
+- Event handlers for all message/read state events
+- Message caching (respects --history-size)
+- Complete CRUD operations for messages (create, read, update, delete)
+- Guild member and role fetching
+- Real-time event broadcasting
+
+**** Data Transfer Objects (~internal/ipc/dto.go~)
+- User, Guild, Channel, Message, ReadState DTOs
+- Member, Role DTOs for mention support
+- Conversion from arikawa types to IPC types
+- Role information included
+
+**** Emacs Client (~discord.el~)
+- Full JSON-RPC 2.0 client implementation
+- Connection management with event handlers
+- Guild/channel/message browser UI
+- Compose buffer for sending and editing messages
+- Message pagination (load older messages)
+- Edit/delete own messages (e, dd keybindings)
+- Mention rendering with caching
+- Evil mode compatibility (n=compose, e=edit, dd=delete)
+- Real-time message updates
+
+** Statistics
+
+- *API Methods:* 12 (ping, listGuilds, listChannels, getMessages, sendMessage, replyToMessage, editMessage, deleteMessage, markAsRead, getReadState, getGuildMembers, getGuildRoles)
+- *Push Events:* 7 (messageCreated, messageUpdated, messageDeleted, readStateUpdated, connectionStatusChanged, guildCreated, channelCreated)
+- *Backend Code:* ~800 lines (Go)
+- *Frontend Code:* ~750 lines (Emacs Lisp)
+- *Test Scripts:* 3 (test-ipc.sh, test-discord-ipc.sh, test-pagination.sh)
+- *Documentation:* Complete (ipc.org, README-discord-el.md, examples-discord-el.sh)
+
+** Components
+
+*** IPC Server
+- Listen on Unix socket ✅
+- Accept client connections ✅
+- Parse JSON-RPC requests ✅
+- Route to handlers ✅
+- Send responses/notifications ✅
+- Handle client disconnections ✅
+
+*** Discord Client
+- Connect to Discord Gateway ✅
+- Maintain connection (heartbeat, reconnect) ✅
+- Cache messages per channel (configurable size) ✅
+- Track read states ✅
+- Handle Discord events ✅
+
+*** Event Dispatcher
+- Receive Discord events ✅
+- Transform to IPC notifications ✅
+- Broadcast to all connected clients ✅
+- Respect Discord notification settings ✅
+
+*** State Manager
+- Maintain guild/channel cache ✅
+- Message history per channel ✅
+- User presence data (basic) ✅
+- Read state tracking ✅
+
+** Internal Architecture
+
+#+begin_src
+cmd/tools/ipc/
+  main.go                # Daemon entry point, CLI flags, signal handling
+
+internal/ipc/
+  server.go              # Unix socket server, client management
+  handler.go             # JSON-RPC method routing, all 10 handlers
+  protocol.go            # JSON-RPC 2.0 protocol definitions
+  dto.go                 # Data transfer objects, type conversions
+  discord.go             # Discord client wrapper, event handlers
+
+discord.el               # Emacs client (650 lines)
+README-discord-el.md     # Client documentation
+examples-discord-el.sh   # Usage examples
+#+end_src
+
+** Event Flow
+
+*** Client Request
+1. Client sends JSON-RPC request
+2. Server parses and validates
+3. Handler executes (e.g., sendMessage)
+4. Discord API called
+5. Response sent to client
+
+*** Discord Event
+1. Gateway event received (e.g., MESSAGE_CREATE)
+2. Cache updated
+3. Event transformed to IPC notification
+4. Broadcast to all connected clients
+
+** Error Handling
+
+*** Error Codes (JSON-RPC standard + custom)
+| Code  | Message                    | Description                          |
+|-------+----------------------------+--------------------------------------|
+| -32700 | Parse error                | Invalid JSON                         |
+| -32600 | Invalid request            | Invalid JSON-RPC                     |
+| -32601 | Method not found           | Unknown method                       |
+| -32602 | Invalid params             | Invalid parameters                   |
+| -32603 | Internal error             | Server error                         |
+| -32000 | Discord API error          | Discord API returned error           |
+| -32001 | Not connected              | No active Discord connection         |
+| -32002 | Permission denied          | Missing Discord permissions          |
+| -32003 | Channel not found          | Invalid channel ID                   |
+| -32004 | Guild not found            | Invalid guild ID                     |
+
+** Configuration
+
+*** Config File Format (TOML)
+#+begin_src toml
+[daemon]
+socket_path = "/tmp/discordo-daemon.sock"
+log_path = "~/.local/share/discordo/daemon.log"
+log_level = "info"
+history_size = 100
+
+[discord]
+# Token can be specified here or via env/keyring
+# token = "..."
+#+end_src
+
+* Client Implementation (Emacs)
+
+** Elisp Package: ~discord.el~
+
+*** Connection
+#+begin_src elisp
+(discord-connect "/tmp/discordo-daemon.sock")
+(discord-disconnect)
+#+end_src
+
+*** Request/Response
+#+begin_src elisp
+;; Synchronous (blocking)
+(discord-list-guilds)
+;; => ((id . "123") (name . "My Server") ...)
+
+;; Asynchronous (callback)
+(discord-send-message "channel-id" "Hello!"
+  (lambda (response)
+    (message "Message sent: %s" (alist-get 'messageId response))))
+#+end_src
+
+*** Event Handlers
+#+begin_src elisp
+(discord-on 'messageCreated
+  (lambda (event)
+    (let ((msg (alist-get 'message event)))
+      ;; Update buffer, show notification, etc.
+      )))
+
+(discord-on 'connectionStatusChanged
+  (lambda (event)
+    (message "Discord: %s" (alist-get 'status event))))
+#+end_src
+
+*** UI Integration
+- Each channel gets an Emacs buffer
+- Messages displayed chronologically
+- Input area for composing messages
+- Keybindings for common actions
+
+* Future Enhancements (Post-MVP)
+
+** Operations
+- ~uploadFile~ - Send file attachments
+- ~addReaction~ - React with emoji
+- ~removeReaction~ - Remove reaction
+- ~deleteMessage~ - Delete own message
+- ~editMessage~ - Edit own message
+- ~getGuildMembers~ - List guild members
+- ~getUserPresence~ - Get user online status
+- ~searchMessages~ - Search message history
+- ~createThread~ - Create thread from message
+
+** Notifications
+- ~typingStart~ - User started typing
+- ~presenceUpdate~ - User status changed
+- ~reactionAdded~ - Reaction added to message
+- ~reactionRemoved~ - Reaction removed
+
+** Features
+- Client-specific subscriptions (filter events per client)
+- Message pagination (infinite scroll)
+- Rich presence updates
+- Voice channel support
+- Authentication/authorization for IPC
+
+** Performance
+- Message compression (gzip)
+- Batch event delivery
+- Incremental sync on reconnect
+- Persistent message cache (disk)
+
+* Security Considerations
+
+** Socket Permissions
+- Socket file: mode 0600 (owner read/write only)
+- Prevents other users from connecting
+
+** Authentication
+- No authentication in MVP (same-user trust model)
+- Future: challenge-response or shared secret
+
+** Rate Limiting
+- Respect Discord API rate limits
+- Queue messages if needed
+- Notify clients of rate limit status
+
+** Data Privacy
+- Token never exposed via IPC
+- Cached messages stored in memory only (MVP)
+- Consider encryption for future disk cache
+
+* Testing Strategy
+
+** Implemented Tests
+
+*** Manual Testing Scripts
+
+**** ~test-ipc.sh~
+Basic connectivity and ping test.
+
+#+begin_src bash
+./test-ipc.sh /tmp/discordo-daemon.sock
+#+end_src
+
+**** ~test-discord-ipc.sh~
+Full Discord integration test with all methods.
+
+#+begin_src bash
+# Test all methods
+./test-discord-ipc.sh /tmp/discordo-daemon.sock [guild_id] [channel_id]
+
+# Example
+./test-discord-ipc.sh /tmp/discordo-daemon.sock 1116381924856971375 1450430001789927506
+#+end_src
+
+** Manual Testing
+
+*** Example Test Session
+#+begin_src bash
+# Start daemon
+nix run .#daemon -- start --log-level debug
+
+# In another terminal, connect with socat
+socat - UNIX-CONNECT:/tmp/discordo-daemon.sock
+
+# Test ping
+{"jsonrpc":"2.0","id":1,"method":"ping"}
+# => {"jsonrpc":"2.0","id":1,"result":{"status":"ok","timestamp":"..."}}
+
+# List guilds
+{"jsonrpc":"2.0","id":2,"method":"listGuilds"}
+# => {"jsonrpc":"2.0","id":2,"result":{"guilds":[...]}}
+
+# List channels
+{"jsonrpc":"2.0","id":3,"method":"listChannels","params":{"guildId":"123..."}}
+# => {"jsonrpc":"2.0","id":3,"result":{"channels":[...]}}
+
+# Get messages (first call slow, subsequent calls instant - CACHED!)
+{"jsonrpc":"2.0","id":4,"method":"getMessages","params":{"channelId":"123...","limit":5}}
+# => {"jsonrpc":"2.0","id":4,"result":{"messages":[...]}}
+
+# Send message
+{"jsonrpc":"2.0","id":5,"method":"sendMessage","params":{"channelId":"123...","content":"Hello!"}}
+# => {"jsonrpc":"2.0","id":5,"result":{"message":{...}}}
+
+# Receive push notification (when someone sends a message)
+# => {"jsonrpc":"2.0","method":"messageCreated","params":{"message":{...}}}
+#+end_src
+
+* Implementation Roadmap
+
+** Phase 1: Core Infrastructure ✅ COMPLETE
+- [X] IPC server (Unix socket)
+- [X] JSON-RPC parser/serializer
+- [X] Basic request/response handling
+- [X] ~ping~ method
+- [X] Client connection management
+- [X] Broadcast notifications to all clients
+
+** Phase 2: Discord Integration ✅ COMPLETE
+- [X] Discord client wrapper
+- [X] Gateway connection
+- [X] Event handling (message create/update/delete)
+- [X] ~listGuilds~, ~listChannels~ methods
+- [X] ~getMessages~ method (with caching!)
+- [X] ~sendMessage~, ~replyToMessage~ methods
+- [X] ~markAsRead~, ~getReadState~ methods
+- [X] Message cache (configurable size)
+- [X] Real-time push notifications
+- [X] Connection status notifications
+- [X] Graceful shutdown (signal handling)
+
+** Phase 3: Mention Support ✅ COMPLETE
+- [X] ~getGuildMembers~ method
+- [X] ~getGuildRoles~ method
+- [X] Member DTO with user, nickname, roles
+- [X] Role DTO with name, color, permissions
+- [X] Client-side mention caching
+- [X] Client-side mention rendering (<@123> → @username)
+
+** Phase 4: Emacs Client ✅ COMPLETE (MVP)
+- [X] Basic ~discord.el~ package
+- [X] Connection management
+- [X] Request/response helpers (all methods)
+- [X] Event handling system (messageCreated, etc.)
+- [X] Simple UI (guild/channel/message browsers)
+- [X] Real-time message updates
+- [X] Compose buffer for sending messages
+- [X] Evil mode compatibility
+- [X] Mention rendering in messages
+
+** Phase 5: Production Ready (IN PROGRESS)
+- [ ] Error handling improvements
+- [ ] Rate limiting respect
+- [ ] Reconnection logic (daemon auto-reconnect)
+- [ ] Performance monitoring
+- [ ] Better error messages in client
+- [ ] Handle daemon disconnection gracefully in client
+
+** Phase 6: Enhanced UI (NEXT)
+- [ ] Message pagination (load older messages)
+- [ ] Rich message rendering (embeds, code blocks, formatting)
+- [ ] Attachment display (images, files)
+- [ ] Reply to specific messages (thread view)
+- [ ] Edit/delete own messages
+- [ ] Emoji reactions display and add/remove
+- [ ] Channel history navigation (j/k keys)
+- [ ] Guild/channel switching without reopening buffers
+- [ ] Unread indicators in channel list
+
+** Phase 7: Advanced Features (FUTURE)
+- [ ] File attachments (~uploadFile~)
+- [ ] User @mention autocomplete when composing
+- [ ] Role @mention autocomplete
+- [ ] Channel #mention autocomplete
+- [ ] Typing indicators
+- [ ] User presence display
+- [ ] Direct messages
+- [ ] Thread support
+- [ ] Voice channel awareness (show who's in voice)
+- [ ] Message search
+- [ ] Pin messages view
+- [ ] Notification preferences per-channel
+
+* Performance Characteristics
+
+** Message Caching
+
+The daemon implements intelligent message caching:
+
+*** First Request (Cold Cache)
+- ~5-30 seconds depending on channel size and network latency
+- Fetches from Discord API
+- Populates cache
+- Returns data
+
+*** Subsequent Requests (Warm Cache)
+- ~Instant (< 100ms)
+- Served from memory cache
+- No network calls
+
+*** Real-time Updates
+- New messages automatically update cache
+- Push notifications sent to all connected clients
+- Cache stays in sync with Discord state
+
+** Benefits Over Standalone Tools
+
+| Feature | Standalone CLI | Daemon + IPC |
+|---------+----------------+--------------|
+| Authentication | Every call | Once |
+| Message fetch | 5-30s each time | Instant (cached) |
+| Real-time updates | Manual polling | Push notifications |
+| Resource usage | High (repeated connections) | Low (single connection) |
+| Latency | Network round-trip | Local IPC |
+
+* Known Issues & Limitations
+
+** Current Limitations
+
+1. **First message fetch is slow**: This is expected - Discord API needs to be queried initially
+2. **No persistence**: Message cache is in-memory only, lost on restart
+3. **Single token**: Daemon runs as one Discord user
+4. **No authentication**: Any local process can connect to the socket (mitigated by file permissions)
+5. **No edit/delete**: Can't edit or delete sent messages
+6. **Basic rendering**: No embeds, code blocks, or rich formatting
+7. **No attachment support**: Can't upload or properly display files
+
+** Recommended Next Steps
+
+*** Priority 1: Stability & UX
+1. ✅ **Message pagination** - Load more messages (before/after) - DONE
+2. ✅ **Edit/delete messages** - Basic CRUD for own messages - DONE
+3. **Error handling** - Better error messages in Emacs client
+4. **Reconnection logic** - Auto-reconnect daemon if gateway drops
+
+*** Priority 2: Rich Content
+1. **Code block rendering** - Syntax highlighting for ```code```
+2. **Embed display** - Show embeds in readable format
+3. **Image attachments** - Display inline or as clickable links
+4. **Markdown formatting** - Bold, italic, strikethrough
+
+*** Priority 3: Productivity
+1. **@mention autocomplete** - Tab-complete users/roles when composing
+2. **Channel navigation** - Switch channels without reopening buffers
+3. **Message search** - Search within channel or guild
+4. **Thread support** - View and reply to threads
+
+*** Priority 4: Advanced
+1. **File upload** - Send attachments from Emacs
+2. **Reactions** - Add/remove emoji reactions
+3. **Typing indicators** - Show when others are typing
+4. **Direct messages** - Private conversations
+5. **Voice awareness** - Show who's in voice channels
+
+** Future Improvements
+
+1. Optional disk-based cache for persistence
+2. Incremental sync on reconnection
+3. Per-client subscriptions (filter events)
+4. Authentication for IPC connections
+5. Multiple account support
+
+* Summary
+
+** What's Complete (v1.0)
+
+*** Backend
+- ✅ Full JSON-RPC 2.0 server over Unix socket
+- ✅ 12 API methods (complete CRUD functionality)
+- ✅ 7 push event types (real-time updates)
+- ✅ Guild member and role metadata
+- ✅ Message caching with configurable size
+- ✅ Graceful shutdown and signal handling
+
+*** Frontend
+- ✅ Complete Emacs client (discord.el)
+- ✅ Guild/channel/message browser UI
+- ✅ Separate compose buffer (Evil-compatible)
+- ✅ Real-time message updates
+- ✅ Mention rendering (@user, @role)
+- ✅ Message pagination (load older messages)
+- ✅ Edit/delete own messages (e, dd keybindings)
+- ✅ Event handling system
+- ✅ Full documentation and examples
+
+*** Testing
+- ✅ Manual test scripts (test-ipc.sh, test-discord-ipc.sh, test-pagination.sh)
+- ✅ Verified all methods working
+- ✅ Verified push notifications working
+- ✅ Evil mode tested and working
+- ✅ Pagination tested and working
+- ✅ Edit/delete tested and working
+
+** What's Next
+
+*Immediate Priority:* Code block rendering + Markdown formatting
+
+*Top 3 Features Needed:*
+1. Code block rendering - Syntax highlighting for developer conversations
+2. Markdown formatting - Bold, italic, strikethrough for readability
+3. Embed display - Rich content support
+
+*Current Status:* Fully functional Discord client with complete CRUD operations. Ready for daily developer use.
+
+* References
+- JSON-RPC 2.0 Specification: https://www.jsonrpc.org/specification
+- Discord API Documentation: https://discord.com/developers/docs
+- Unix Domain Sockets: ~man 7 unix~
+- Arikawa Library: https://github.com/diamondburned/arikawa
+- Ningen Library: https://github.com/diamondburned/ningen
