@@ -70,6 +70,7 @@ Keys are method names (strings), values are lists of callback functions.")
 
 ;;; Connection management
 
+;;;###autoload
 (defun concordd-connect (&optional socket-path)
   "Connect to the concorddo-daemon.
 Optional SOCKET-PATH overrides `concordd-socket-path'."
@@ -356,6 +357,7 @@ Optional CALLBACK is called on completion."
 (setq concordd-guild-members (make-hash-table :test 'equal))
 (setq concordd-guild-roles (make-hash-table :test 'equal))
 
+;;;###autoload
 (defun concordd-browse ()
   "Open Concordd browser interface."
   (interactive)
