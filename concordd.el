@@ -85,6 +85,7 @@ Optional SOCKET-PATH overrides `concordd-socket-path'."
     (setq concordd--connection
           (make-network-process
            :name "concordd-daemon"
+           :family 'local
            :remote path
            :coding 'utf-8
            :filter #'concordd--filter
