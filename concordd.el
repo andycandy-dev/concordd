@@ -10,7 +10,7 @@
 ;;; Commentary:
 
 ;; This package provides a Concordd client for Emacs that connects to
-;; the concorddo-daemon via Unix domain socket using JSON-RPC 2.0.
+;; the concordd daemon via Unix domain socket using JSON-RPC 2.0.
 ;;
 ;; Features:
 ;; - List guilds and channels
@@ -37,7 +37,7 @@
   :prefix "concordd-")
 
 (defcustom concordd-socket-path "/tmp/concordd.sock"
-  "Path to the concorddo-daemon Unix socket."
+  "Path to the concordd daemon Unix socket."
   :type 'string
   :group 'concordd)
 
@@ -72,7 +72,7 @@ Keys are method names (strings), values are lists of callback functions.")
 
 ;;;###autoload
 (defun concordd-connect (&optional socket-path)
-  "Connect to the concorddo-daemon.
+  "Connect to the concordd daemon.
 Optional SOCKET-PATH overrides `concordd-socket-path'."
   (interactive)
   (when concordd--connection
@@ -80,7 +80,7 @@ Optional SOCKET-PATH overrides `concordd-socket-path'."
   
   (let ((path (or socket-path concordd-socket-path)))
     (unless (file-exists-p path)
-      (error "Socket not found: %s. Is concorddo-daemon running?" path))
+      (error "Socket not found: %s. Is concordd daemon running?" path))
     
     (setq concordd--connection
           (make-network-process
@@ -100,7 +100,7 @@ Optional SOCKET-PATH overrides `concordd-socket-path'."
        (message "Concordd daemon ready: %s" (plist-get result :status))))))
 
 (defun concordd-disconnect ()
-  "Disconnect from the concorddo-daemon."
+  "Disconnect from the concordd daemon."
   (interactive)
   (when concordd--connection
     (delete-process concordd--connection)
