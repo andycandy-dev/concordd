@@ -1,11 +1,11 @@
-#+TITLE: Discordo IPC Architecture
-#+AUTHOR: Discordo Project
+#+TITLE: Concordd IPC Architecture
+#+AUTHOR: Concordd Project
 #+DATE: 2025-12-27
 #+UPDATED: 2025-12-28
 
 * Overview
 
-IPC system for ~discordo-daemon~ to enable external clients (primarily Emacs) to interact with Discord.
+IPC system for ~concordd~ to enable external clients (primarily Emacs) to interact with Discord.
 
 ** Implementation Status: ✅ v1.0 COMPLETE
 
@@ -44,7 +44,7 @@ The v1.0 implementation is complete and functional. All core features are workin
        │ JSON-RPC 2.0
        │
 ┌──────▼───────────────────────────┐
-│  discordo-daemon                 │
+│  concordd                        │
 │  ┌─────────────────────────────┐ │
 │  │ IPC Server                  │ │
 │  │ - Unix socket listener      │ │
@@ -71,7 +71,7 @@ The v1.0 implementation is complete and functional. All core features are workin
 
 ** Socket
 - Unix domain socket (file-based)
-- Default: ~/tmp/discordo-daemon.sock~
+- Default: ~/tmp/concordd.sock~
 - Configurable via ~--socket-path~ flag
 - Permissions: 0600 (owner only)
 
@@ -510,11 +510,11 @@ New channel created in a guild.
 
 #+begin_src bash
 # Start daemon
-discordo-daemon start [OPTIONS]
+concordd start [OPTIONS]
 
 # Options:
---socket-path PATH        # Socket path (default: /tmp/discordo-daemon.sock)
---token TOKEN            # Discord token (default: $DISCORDO_TOKEN or keyring)
+--socket-path PATH        # Socket path (default: /tmp/concordd.sock)
+--token TOKEN            # Discord token (default: $CONCORDD_TOKEN or keyring)
 --log-path PATH          # Log file path
 --log-level LEVEL        # Log level (debug|info|warn|error)
 --history-size N         # Message cache size per channel (default: 100)
@@ -654,8 +654,8 @@ examples-discord-el.sh   # Usage examples
 *** Config File Format (TOML)
 #+begin_src toml
 [daemon]
-socket_path = "/tmp/discordo-daemon.sock"
-log_path = "~/.local/share/discordo/daemon.log"
+socket_path = "/tmp/concordd.sock"
+log_path = "~/.local/share/concordd/daemon.log"
 log_level = "info"
 history_size = 100
 
@@ -670,7 +670,7 @@ history_size = 100
 
 *** Connection
 #+begin_src elisp
-(discord-connect "/tmp/discordo-daemon.sock")
+(discord-connect "/tmp/concordd.sock")
 (discord-disconnect)
 #+end_src
 
@@ -767,7 +767,7 @@ history_size = 100
 Basic connectivity and ping test.
 
 #+begin_src bash
-./test-ipc.sh /tmp/discordo-daemon.sock
+./test-ipc.sh /tmp/concordd.sock
 #+end_src
 
 **** ~test-discord-ipc.sh~
@@ -775,10 +775,10 @@ Full Discord integration test with all methods.
 
 #+begin_src bash
 # Test all methods
-./test-discord-ipc.sh /tmp/discordo-daemon.sock [guild_id] [channel_id]
+./test-discord-ipc.sh /tmp/concordd.sock [guild_id] [channel_id]
 
 # Example
-./test-discord-ipc.sh /tmp/discordo-daemon.sock 1116381924856971375 1450430001789927506
+./test-discord-ipc.sh /tmp/concordd.sock 1116381924856971375 1450430001789927506
 #+end_src
 
 ** Manual Testing
@@ -789,7 +789,7 @@ Full Discord integration test with all methods.
 nix run .#daemon -- start --log-level debug
 
 # In another terminal, connect with socat
-socat - UNIX-CONNECT:/tmp/discordo-daemon.sock
+socat - UNIX-CONNECT:/tmp/concordd.sock
 
 # Test ping
 {"jsonrpc":"2.0","id":1,"method":"ping"}
