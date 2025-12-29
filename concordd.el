@@ -1,16 +1,16 @@
-;;; discord.el --- Discord IPC client for Emacs -*- lexical-binding: t; -*-
+;;; concordd.el --- Concordd IPC client for Emacs -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2025 Discordo Project
-;; Author: Discordo Project
+;; Copyright (C) 2025 Concorddo Project
+;; Author: Concorddo Project
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "27.1"))
-;; Keywords: comm, discord
-;; URL: https://github.com/ayn2op/discordo
+;; Keywords: comm, concordd
+;; URL: https://github.com/ayn2op/concorddo
 
 ;;; Commentary:
 
-;; This package provides a Discord client for Emacs that connects to
-;; the discordo-daemon via Unix domain socket using JSON-RPC 2.0.
+;; This package provides a Concordd client for Emacs that connects to
+;; the concorddo-daemon via Unix domain socket using JSON-RPC 2.0.
 ;;
 ;; Features:
 ;; - List guilds and channels
@@ -20,9 +20,9 @@
 ;; - Mark channels as read
 ;;
 ;; Usage:
-;;   (require 'discord)
-;;   (discord-connect)
-;;   (discord-list-guilds)
+;;   (require 'concordd)
+;;   (concordd-connect)
+;;   (concordd-list-guilds)
 
 ;;; Code:
 
@@ -31,165 +31,165 @@
 
 ;;; Customization
 
-(defgroup discord nil
-  "Discord client for Emacs."
+(defgroup concordd nil
+  "Concordd client for Emacs."
   :group 'comm
-  :prefix "discord-")
+  :prefix "concordd-")
 
-(defcustom discord-socket-path "/tmp/concordd.sock"
-  "Path to the discordo-daemon Unix socket."
+(defcustom concordd-socket-path "/tmp/concordd.sock"
+  "Path to the concorddo-daemon Unix socket."
   :type 'string
-  :group 'discord)
+  :group 'concordd)
 
-(defcustom discord-log-messages nil
+(defcustom concordd-log-messages nil
   "Whether to log JSON-RPC messages for debugging."
   :type 'boolean
-  :group 'discord)
+  :group 'concordd)
 
 ;;; Internal variables
 
-(defvar discord--connection nil
+(defvar concordd--connection nil
   "Network process for the daemon connection.")
 
-(defvar discord--request-id 0
+(defvar concordd--request-id 0
   "Counter for JSON-RPC request IDs.")
 
-(defvar discord--pending-requests (make-hash-table :test 'equal)
+(defvar concordd--pending-requests (make-hash-table :test 'equal)
   "Hash table of pending requests awaiting responses.
 Keys are request IDs, values are callback functions.")
 
-(defvar discord--event-handlers (make-hash-table :test 'equal)
+(defvar concordd--event-handlers (make-hash-table :test 'equal)
   "Hash table of event handlers for push notifications.
 Keys are method names (strings), values are lists of callback functions.")
 
-(defvar discord--buffer nil
+(defvar concordd--buffer nil
   "Buffer for accumulating incoming data.")
 
-(defvar discord--current-user-id nil
-  "The current user's Discord ID.")
+(defvar concordd--current-user-id nil
+  "The current user's Concordd ID.")
 
 ;;; Connection management
 
-(defun discord-connect (&optional socket-path)
-  "Connect to the discordo-daemon.
-Optional SOCKET-PATH overrides `discord-socket-path'."
+(defun concordd-connect (&optional socket-path)
+  "Connect to the concorddo-daemon.
+Optional SOCKET-PATH overrides `concordd-socket-path'."
   (interactive)
-  (when discord--connection
-    (error "Already connected to Discord daemon"))
+  (when concordd--connection
+    (error "Already connected to Concordd daemon"))
   
-  (let ((path (or socket-path discord-socket-path)))
+  (let ((path (or socket-path concordd-socket-path)))
     (unless (file-exists-p path)
-      (error "Socket not found: %s. Is discordo-daemon running?" path))
+      (error "Socket not found: %s. Is concorddo-daemon running?" path))
     
-    (setq discord--connection
+    (setq concordd--connection
           (make-network-process
-           :name "discord-daemon"
+           :name "concordd-daemon"
            :remote path
            :coding 'utf-8
-           :filter #'discord--filter
-           :sentinel #'discord--sentinel))
+           :filter #'concordd--filter
+           :sentinel #'concordd--sentinel))
     
-    (setq discord--buffer "")
-    (message "Connected to Discord daemon at %s" path)
+    (setq concordd--buffer "")
+    (message "Connected to Concordd daemon at %s" path)
     
     ;; Test connection with ping
-    (discord-ping
+    (concordd-ping
      (lambda (result)
-       (message "Discord daemon ready: %s" (plist-get result :status))))))
+       (message "Concordd daemon ready: %s" (plist-get result :status))))))
 
-(defun discord-disconnect ()
-  "Disconnect from the discordo-daemon."
+(defun concordd-disconnect ()
+  "Disconnect from the concorddo-daemon."
   (interactive)
-  (when discord--connection
-    (delete-process discord--connection)
-    (setq discord--connection nil)
-    (setq discord--buffer "")
-    (clrhash discord--pending-requests)
-    (message "Disconnected from Discord daemon")))
+  (when concordd--connection
+    (delete-process concordd--connection)
+    (setq concordd--connection nil)
+    (setq concordd--buffer "")
+    (clrhash concordd--pending-requests)
+    (message "Disconnected from Concordd daemon")))
 
-(defun discord-connected-p ()
+(defun concordd-connected-p ()
   "Return non-nil if connected to the daemon."
-  (and discord--connection
-       (process-live-p discord--connection)))
+  (and concordd--connection
+       (process-live-p concordd--connection)))
 
 ;;; JSON-RPC implementation
 
-(defun discord--next-id ()
+(defun concordd--next-id ()
   "Generate next request ID."
-  (cl-incf discord--request-id))
+  (cl-incf concordd--request-id))
 
-(defun discord--send-request (method params callback)
+(defun concordd--send-request (method params callback)
   "Send a JSON-RPC request to the daemon.
 METHOD is the RPC method name.
 PARAMS is a plist of parameters.
 CALLBACK is called with the result on success, or nil on error."
-  (unless (discord-connected-p)
-    (error "Not connected to Discord daemon"))
+  (unless (concordd-connected-p)
+    (error "Not connected to Concordd daemon"))
   
-  (let* ((id (discord--next-id))
+  (let* ((id (concordd--next-id))
          (request `((jsonrpc . "2.0")
                    (id . ,id)
                    (method . ,method)
                    (params . ,params)))
          (json (concat (json-encode request) "\n")))
     
-    (when discord-log-messages
+    (when concordd-log-messages
       (message "→ %s" json))
     
-    (puthash id callback discord--pending-requests)
-    (process-send-string discord--connection json)))
+    (puthash id callback concordd--pending-requests)
+    (process-send-string concordd--connection json)))
 
-(defun discord--filter (proc string)
+(defun concordd--filter (proc string)
   "Process filter for incoming data from daemon.
 PROC is the network process.
 STRING is the incoming data."
-  (setq discord--buffer (concat discord--buffer string))
+  (setq concordd--buffer (concat concordd--buffer string))
   
   ;; Process complete lines (messages end with \n)
-  (while (string-match "\n" discord--buffer)
+  (while (string-match "\n" concordd--buffer)
     (let* ((line-end (match-beginning 0))
-           (line (substring discord--buffer 0 line-end)))
-      (setq discord--buffer (substring discord--buffer (1+ line-end)))
-      (discord--handle-message line))))
+           (line (substring concordd--buffer 0 line-end)))
+      (setq concordd--buffer (substring concordd--buffer (1+ line-end)))
+      (concordd--handle-message line))))
 
-(defun discord--handle-message (line)
+(defun concordd--handle-message (line)
   "Handle a complete JSON-RPC message from the daemon.
 LINE is the JSON string."
-  (when discord-log-messages
+  (when concordd-log-messages
     (message "← %s" line))
   
   (condition-case err
       (let ((msg (json-parse-string line :object-type 'plist :array-type 'list)))
         (if (plist-get msg :id)
             ;; Response
-            (discord--handle-response msg)
+            (concordd--handle-response msg)
           ;; Notification
-          (discord--handle-notification msg)))
+          (concordd--handle-notification msg)))
     (error
      (message "Error parsing JSON-RPC message: %s" err))))
 
-(defun discord--handle-response (msg)
+(defun concordd--handle-response (msg)
   "Handle a JSON-RPC response.
 MSG is the parsed response plist."
   (let* ((id (plist-get msg :id))
-         (callback (gethash id discord--pending-requests)))
-    (remhash id discord--pending-requests)
+         (callback (gethash id concordd--pending-requests)))
+    (remhash id concordd--pending-requests)
     
     (when callback
       (if (plist-get msg :error)
           (let ((error-obj (plist-get msg :error)))
-            (message "Discord RPC error: %s" (plist-get error-obj :message))
+            (message "Concordd RPC error: %s" (plist-get error-obj :message))
             (funcall callback nil))
         (funcall callback (plist-get msg :result))))))
 
-(defun discord--handle-notification (msg)
+(defun concordd--handle-notification (msg)
   "Handle a JSON-RPC notification (push event).
 MSG is the parsed notification plist."
   (let* ((method (plist-get msg :method))
          (params (plist-get msg :params))
-         (handlers (gethash method discord--event-handlers)))
+         (handlers (gethash method concordd--event-handlers)))
     
-    (when discord-log-messages
+    (when concordd-log-messages
       (message "Event: %s" method))
     
     (dolist (handler handlers)
@@ -198,42 +198,42 @@ MSG is the parsed notification plist."
         (error
          (message "Error in event handler for %s: %s" method err))))))
 
-(defun discord--sentinel (proc event)
+(defun concordd--sentinel (proc event)
   "Process sentinel for connection status.
 PROC is the network process.
 EVENT describes the status change."
   (unless (process-live-p proc)
-    (message "Disconnected from Discord daemon: %s" (string-trim event))
-    (setq discord--connection nil)))
+    (message "Disconnected from Concordd daemon: %s" (string-trim event))
+    (setq concordd--connection nil)))
 
 ;;; Event handling
 
-(defun discord-on (event handler)
+(defun concordd-on (event handler)
   "Register an event handler.
 EVENT is the event name (symbol or string).
 HANDLER is a function that takes a params plist."
   (let* ((event-name (if (symbolp event) (symbol-name event) event))
-         (handlers (gethash event-name discord--event-handlers)))
-    (puthash event-name (cons handler handlers) discord--event-handlers)))
+         (handlers (gethash event-name concordd--event-handlers)))
+    (puthash event-name (cons handler handlers) concordd--event-handlers)))
 
-(defun discord-off (event &optional handler)
+(defun concordd-off (event &optional handler)
   "Unregister event handlers.
 EVENT is the event name (symbol or string).
 If HANDLER is nil, remove all handlers for EVENT.
 Otherwise, remove only that HANDLER."
   (let ((event-name (if (symbolp event) (symbol-name event) event)))
     (if handler
-        (let ((handlers (gethash event-name discord--event-handlers)))
-          (puthash event-name (delq handler handlers) discord--event-handlers))
-      (remhash event-name discord--event-handlers))))
+        (let ((handlers (gethash event-name concordd--event-handlers)))
+          (puthash event-name (delq handler handlers) concordd--event-handlers))
+      (remhash event-name concordd--event-handlers))))
 
 ;;; API methods
 
-(defun discord-ping (&optional callback)
+(defun concordd-ping (&optional callback)
   "Ping the daemon.
 CALLBACK is called with the result."
   (interactive)
-  (discord--send-request
+  (concordd--send-request
    "ping"
    nil
    (or callback
@@ -241,7 +241,7 @@ CALLBACK is called with the result."
          (when (called-interactively-p 'interactive)
            (message "Pong! %s" (plist-get result :timestamp)))))))
 
-(defun discord-list-guilds (callback)
+(defun concordd-list-guilds (callback)
   "List all guilds.
 CALLBACK is called with a list of guild objects."
   (interactive
@@ -250,17 +250,17 @@ CALLBACK is called with a list of guild objects."
              (message "Guilds: %s" 
                      (mapconcat (lambda (g) (plist-get g :name))
                                guilds ", "))))))
-  (discord--send-request "listGuilds" nil callback))
+  (concordd--send-request "listGuilds" nil callback))
 
-(defun discord-list-channels (guild-id callback)
+(defun concordd-list-channels (guild-id callback)
   "List all channels in GUILD-ID.
 CALLBACK is called with a list of channel objects."
-  (discord--send-request
+  (concordd--send-request
    "listChannels"
    `(:guildId ,guild-id)
    callback))
 
-(defun discord-get-messages (channel-id callback &optional limit before)
+(defun concordd-get-messages (channel-id callback &optional limit before)
   "Get messages from CHANNEL-ID.
 CALLBACK is called with a list of message objects.
 Optional LIMIT specifies number of messages (default: 50).
@@ -270,140 +270,140 @@ Optional BEFORE is a message ID for pagination."
       (setq params (plist-put params :limit limit)))
     (when before
       (setq params (plist-put params :before before)))
-    (discord--send-request "getMessages" params callback)))
+    (concordd--send-request "getMessages" params callback)))
 
-(defun discord-send-message (channel-id content callback)
+(defun concordd-send-message (channel-id content callback)
   "Send a message to CHANNEL-ID with CONTENT.
 CALLBACK is called with the sent message object."
-  (discord--send-request
+  (concordd--send-request
    "sendMessage"
    `(:channelId ,channel-id :content ,content)
    callback))
 
-(defun discord-reply-to-message (channel-id message-id content callback)
+(defun concordd-reply-to-message (channel-id message-id content callback)
   "Reply to MESSAGE-ID in CHANNEL-ID with CONTENT.
 CALLBACK is called with the sent message object."
-  (discord--send-request
+  (concordd--send-request
    "replyToMessage"
    `(:channelId ,channel-id :messageId ,message-id :content ,content)
    callback))
 
-(defun discord-mark-as-read (channel-id message-id &optional callback)
+(defun concordd-mark-as-read (channel-id message-id &optional callback)
   "Mark CHANNEL-ID as read up to MESSAGE-ID.
 Optional CALLBACK is called on completion."
-  (discord--send-request
+  (concordd--send-request
    "markAsRead"
    `(:channelId ,channel-id :messageId ,message-id)
    (or callback (lambda (_result) nil))))
 
-(defun discord-get-read-state (channel-id callback)
+(defun concordd-get-read-state (channel-id callback)
   "Get read state for CHANNEL-ID.
 CALLBACK is called with the read state object."
-  (discord--send-request
+  (concordd--send-request
    "getReadState"
    `(:channelId ,channel-id)
    callback))
 
-(defun discord-get-guild-members (guild-id callback)
+(defun concordd-get-guild-members (guild-id callback)
   "Get members for GUILD-ID.
 CALLBACK is called with a list of member objects."
-  (discord--send-request
+  (concordd--send-request
    "getGuildMembers"
    `(:guildId ,guild-id)
    callback))
 
-(defun discord-get-guild-roles (guild-id callback)
+(defun concordd-get-guild-roles (guild-id callback)
   "Get roles for GUILD-ID.
 CALLBACK is called with a list of role objects."
-  (discord--send-request
+  (concordd--send-request
    "getGuildRoles"
    `(:guildId ,guild-id)
    callback))
 
-(defun discord-edit-message (channel-id message-id content callback)
+(defun concordd-edit-message (channel-id message-id content callback)
   "Edit MESSAGE-ID in CHANNEL-ID with new CONTENT.
 CALLBACK is called with the edited message object."
-  (discord--send-request
+  (concordd--send-request
    "editMessage"
    `(:channelId ,channel-id :messageId ,message-id :content ,content)
    callback))
 
-(defun discord-delete-message (channel-id message-id &optional callback)
+(defun concordd-delete-message (channel-id message-id &optional callback)
   "Delete MESSAGE-ID in CHANNEL-ID.
 Optional CALLBACK is called on completion."
-  (discord--send-request
+  (concordd--send-request
    "deleteMessage"
    `(:channelId ,channel-id :messageId ,message-id)
    (or callback (lambda (_result) (message "Message deleted")))))
 
 ;;; Simple UI
 
-(defvar discord-guilds nil
+(defvar concordd-guilds nil
   "Cached list of guilds.")
 
-(defvar discord-current-guild nil
+(defvar concordd-current-guild nil
   "Currently selected guild ID.")
 
-(defvar discord-current-channel nil
+(defvar concordd-current-channel nil
   "Currently selected channel ID.")
 
-(defvar discord-guild-members nil
+(defvar concordd-guild-members nil
   "Hash table of guild ID -> members list.")
 
-(defvar discord-guild-roles nil
+(defvar concordd-guild-roles nil
   "Hash table of guild ID -> roles list.")
 
-(setq discord-guild-members (make-hash-table :test 'equal))
-(setq discord-guild-roles (make-hash-table :test 'equal))
+(setq concordd-guild-members (make-hash-table :test 'equal))
+(setq concordd-guild-roles (make-hash-table :test 'equal))
 
-(defun discord-browse ()
-  "Open Discord browser interface."
+(defun concordd-browse ()
+  "Open Concordd browser interface."
   (interactive)
-  (unless (discord-connected-p)
-    (discord-connect))
+  (unless (concordd-connected-p)
+    (concordd-connect))
   
   ;; Fetch guilds
-  (discord-list-guilds
+  (concordd-list-guilds
    (lambda (result)
-     (setq discord-guilds (plist-get result :guilds))
-     (discord--show-guild-list))))
+     (setq concordd-guilds (plist-get result :guilds))
+     (concordd--show-guild-list))))
 
-(defun discord--show-guild-list ()
+(defun concordd--show-guild-list ()
   "Show list of guilds in a buffer."
-  (let ((buf (get-buffer-create "*Discord Guilds*")))
+  (let ((buf (get-buffer-create "*Concordd Guilds*")))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (discord-guild-list-mode)
-        (insert (propertize "Discord Guilds\n\n" 'face 'bold))
-        (dolist (guild discord-guilds)
+        (concordd-guild-list-mode)
+        (insert (propertize "Concordd Guilds\n\n" 'face 'bold))
+        (dolist (guild concordd-guilds)
           (let ((name (plist-get guild :name))
                 (id (plist-get guild :id)))
             (insert-button name
-                          'action (lambda (_btn) (discord--select-guild id))
+                          'action (lambda (_btn) (concordd--select-guild id))
                           'follow-link t)
             (insert "\n"))))
       (goto-char (point-min)))
     (pop-to-buffer buf)))
 
-(defun discord--select-guild (guild-id)
+(defun concordd--select-guild (guild-id)
   "Select and show channels for GUILD-ID."
-  (setq discord-current-guild guild-id)
-  (discord-list-channels
+  (setq concordd-current-guild guild-id)
+  (concordd-list-channels
    guild-id
    (lambda (result)
-     (discord--show-channel-list (plist-get result :channels)))))
+     (concordd--show-channel-list (plist-get result :channels)))))
 
-(defun discord--show-channel-list (channels)
+(defun concordd--show-channel-list (channels)
   "Show list of CHANNELS in a buffer."
-  (let ((buf (get-buffer-create "*Discord Channels*"))
-        (guild-name (cl-loop for g in discord-guilds
-                            when (string= (plist-get g :id) discord-current-guild)
+  (let ((buf (get-buffer-create "*Concordd Channels*"))
+        (guild-name (cl-loop for g in concordd-guilds
+                            when (string= (plist-get g :id) concordd-current-guild)
                             return (plist-get g :name))))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (discord-channel-list-mode)
+        (concordd-channel-list-mode)
         (insert (propertize (format "Channels in %s\n\n" guild-name) 'face 'bold))
         (dolist (channel channels)
           (let* ((name (plist-get channel :name))
@@ -416,21 +416,21 @@ Optional CALLBACK is called on completion."
               (when unread
                 (insert "● "))
               (insert-button (format "#%s" name)
-                            'action (lambda (_btn) (discord--open-channel id name))
+                            'action (lambda (_btn) (concordd--open-channel id name))
                             'follow-link t)
               (insert "\n")))))
       (goto-char (point-min)))
     (pop-to-buffer buf)))
 
-(defun discord--open-channel (channel-id channel-name)
+(defun concordd--open-channel (channel-id channel-name)
   "Open messages for CHANNEL-ID with CHANNEL-NAME."
-  (setq discord-current-channel channel-id)
-  (let ((buf (get-buffer-create (format "*Discord: #%s*" channel-name))))
+  (setq concordd-current-channel channel-id)
+  (let ((buf (get-buffer-create (format "*Concordd: #%s*" channel-name))))
     (with-current-buffer buf
-      (discord-channel-mode)
-      (setq-local discord-channel-id channel-id)
-      (setq-local discord-channel-name channel-name)
-      (setq-local discord-channel-guild-id discord-current-guild)
+      (concordd-channel-mode)
+      (setq-local concordd-channel-id channel-id)
+      (setq-local concordd-channel-name channel-name)
+      (setq-local concordd-channel-guild-id concordd-current-guild)
       (let ((inhibit-read-only t))
         (erase-buffer)
         (insert (propertize (format "Channel: #%s\n\n" channel-name) 'face 'bold))
@@ -439,87 +439,87 @@ Optional CALLBACK is called on completion."
     (pop-to-buffer buf)
     
     ;; Load guild metadata (members and roles) for mention rendering
-    (when discord-current-guild
-      (discord--load-guild-metadata discord-current-guild))
+    (when concordd-current-guild
+      (concordd--load-guild-metadata concordd-current-guild))
     
     ;; Load messages
-    (discord--load-channel-messages channel-id)))
+    (concordd--load-channel-messages channel-id)))
 
-(defun discord--load-guild-metadata (guild-id)
+(defun concordd--load-guild-metadata (guild-id)
   "Load members and roles for GUILD-ID into cache."
-  (unless (gethash guild-id discord-guild-members)
-    (discord-get-guild-members
+  (unless (gethash guild-id concordd-guild-members)
+    (concordd-get-guild-members
      guild-id
      (lambda (result)
-       (puthash guild-id (plist-get result :members) discord-guild-members))))
+       (puthash guild-id (plist-get result :members) concordd-guild-members))))
   
-  (unless (gethash guild-id discord-guild-roles)
-    (discord-get-guild-roles
+  (unless (gethash guild-id concordd-guild-roles)
+    (concordd-get-guild-roles
      guild-id
      (lambda (result)
-       (puthash guild-id (plist-get result :roles) discord-guild-roles)))))
+       (puthash guild-id (plist-get result :roles) concordd-guild-roles)))))
 
-(defun discord--load-channel-messages (channel-id)
+(defun concordd--load-channel-messages (channel-id)
   "Load messages for CHANNEL-ID."
-  (discord-get-messages
+  (concordd-get-messages
    channel-id
    (lambda (result)
      (let ((messages (reverse (plist-get result :messages))))
-       (discord--display-messages channel-id messages nil)))
+       (concordd--display-messages channel-id messages nil)))
    50 nil))
 
-(defun discord-load-more-messages ()
+(defun concordd-load-more-messages ()
   "Load older messages in current channel."
   (interactive)
-  (unless discord-channel-id
-    (error "Not in a Discord channel buffer"))
+  (unless concordd-channel-id
+    (error "Not in a Concordd channel buffer"))
   
-  (when discord-loading-messages
+  (when concordd-loading-messages
     (message "Already loading messages...")
-    (cl-return-from discord-load-more-messages))
+    (cl-return-from concordd-load-more-messages))
   
-  (unless discord-oldest-message-id
+  (unless concordd-oldest-message-id
     (message "No older messages to load")
-    (cl-return-from discord-load-more-messages))
+    (cl-return-from concordd-load-more-messages))
   
-  (setq discord-loading-messages t)
+  (setq concordd-loading-messages t)
   (message "Loading older messages...")
   
-  (discord-get-messages
-   discord-channel-id
+  (concordd-get-messages
+   concordd-channel-id
    (lambda (result)
-     (setq discord-loading-messages nil)
+     (setq concordd-loading-messages nil)
      (let ((messages (reverse (plist-get result :messages))))
        (if (null messages)
            (message "No more messages")
-         (discord--prepend-messages discord-channel-id messages)
+         (concordd--prepend-messages concordd-channel-id messages)
          (message "Loaded %d messages" (length messages)))))
    50
-   discord-oldest-message-id))
+   concordd-oldest-message-id))
 
-(defun discord--display-messages (channel-id messages &optional keep-position)
+(defun concordd--display-messages (channel-id messages &optional keep-position)
   "Display MESSAGES for CHANNEL-ID in current buffer.
 If KEEP-POSITION is non-nil, try to maintain cursor position."
   (let ((buf (cl-find-if
               (lambda (b)
                 (with-current-buffer b
-                  (and (eq major-mode 'discord-channel-mode)
-                       (string= discord-channel-id channel-id))))
+                  (and (eq major-mode 'concordd-channel-mode)
+                       (string= concordd-channel-id channel-id))))
               (buffer-list))))
     (when buf
       (with-current-buffer buf
         (let ((inhibit-read-only t)
               (old-point (when keep-position (point))))
           (erase-buffer)
-          (insert (propertize (format "Channel: #%s\n\n" discord-channel-name) 'face 'bold))
+          (insert (propertize (format "Channel: #%s\n\n" concordd-channel-name) 'face 'bold))
           
           ;; Track oldest message for pagination
           (when messages
-            (setq discord-oldest-message-id (plist-get (car messages) :id)))
+            (setq concordd-oldest-message-id (plist-get (car messages) :id)))
           
           ;; Insert messages
           (dolist (msg messages)
-            (discord--insert-message msg))
+            (concordd--insert-message msg))
           
           ;; Add help text
           (goto-char (point-max))
@@ -531,13 +531,13 @@ If KEEP-POSITION is non-nil, try to maintain cursor position."
               (goto-char (min old-point (point-max)))
             (goto-char (point-max))))))))
 
-(defun discord--prepend-messages (channel-id messages)
+(defun concordd--prepend-messages (channel-id messages)
   "Prepend MESSAGES to CHANNEL-ID buffer (for pagination)."
   (let ((buf (cl-find-if
               (lambda (b)
                 (with-current-buffer b
-                  (and (eq major-mode 'discord-channel-mode)
-                       (string= discord-channel-id channel-id))))
+                  (and (eq major-mode 'concordd-channel-mode)
+                       (string= concordd-channel-id channel-id))))
               (buffer-list))))
     (when buf
       (with-current-buffer buf
@@ -549,13 +549,13 @@ If KEEP-POSITION is non-nil, try to maintain cursor position."
             
             ;; Update oldest message ID
             (when messages
-              (setq discord-oldest-message-id (plist-get (car messages) :id)))
+              (setq concordd-oldest-message-id (plist-get (car messages) :id)))
             
             ;; Insert older messages at the top
             (dolist (msg messages)
-              (discord--insert-message msg))))))))
+              (concordd--insert-message msg))))))))
 
-(defun discord--insert-message (msg)
+(defun concordd--insert-message (msg)
   "Insert a single message MSG into current buffer."
   (let* ((author (plist-get msg :author))
          (username (plist-get author :username))
@@ -563,7 +563,7 @@ If KEEP-POSITION is non-nil, try to maintain cursor position."
          (timestamp (plist-get msg :timestamp))
          (time-str (format-time-string "%H:%M" (date-to-time timestamp)))
          ;; Use buffer-local guild-id instead of message's guild-id
-         (guild-id discord-channel-guild-id)
+         (guild-id concordd-channel-guild-id)
          (message-id (plist-get msg :id))
          (author-id (plist-get author :id))
          (start-pos (point)))
@@ -573,19 +573,19 @@ If KEEP-POSITION is non-nil, try to maintain cursor position."
     (insert ": ")
     
     ;; Render content with mentions resolved
-    (discord--insert-content-with-mentions content guild-id)
+    (concordd--insert-content-with-mentions content guild-id)
     (insert "\n")
     
     ;; Add text properties to the entire message line for easy lookup
-    (put-text-property start-pos (point) 'discord-message-id message-id)
-    (put-text-property start-pos (point) 'discord-author-id author-id)
-    (put-text-property start-pos (point) 'discord-message-content content)))
+    (put-text-property start-pos (point) 'concordd-message-id message-id)
+    (put-text-property start-pos (point) 'concordd-author-id author-id)
+    (put-text-property start-pos (point) 'concordd-message-content content)))
 
-(defun discord--insert-content-with-mentions (content guild-id)
+(defun concordd--insert-content-with-mentions (content guild-id)
   "Insert CONTENT with mentions resolved using GUILD-ID cache."
   (let ((pos 0)
-        (members (when guild-id (gethash guild-id discord-guild-members)))
-        (roles (when guild-id (gethash guild-id discord-guild-roles))))
+        (members (when guild-id (gethash guild-id concordd-guild-members)))
+        (roles (when guild-id (gethash guild-id concordd-guild-roles))))
     
     (while (string-match "<@\\(&?\\)\\([0-9]+\\)>" content pos)
       ;; Insert text before mention
@@ -625,68 +625,68 @@ If KEEP-POSITION is non-nil, try to maintain cursor position."
 
 ;;; Major modes
 
-(defvar discord-guild-list-mode-map
+(defvar concordd-guild-list-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "q") #'quit-window)
-    (define-key map (kbd "g") #'discord-browse)
+    (define-key map (kbd "g") #'concordd-browse)
     map)
-  "Keymap for `discord-guild-list-mode'.")
+  "Keymap for `concordd-guild-list-mode'.")
 
-(define-derived-mode discord-guild-list-mode special-mode "Discord-Guilds"
-  "Major mode for browsing Discord guilds."
+(define-derived-mode concordd-guild-list-mode special-mode "Concordd-Guilds"
+  "Major mode for browsing Concordd guilds."
   (setq buffer-read-only t))
 
-(defvar discord-channel-list-mode-map
+(defvar concordd-channel-list-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "q") #'quit-window)
-    (define-key map (kbd "g") #'discord-browse)
+    (define-key map (kbd "g") #'concordd-browse)
     map)
-  "Keymap for `discord-channel-list-mode'.")
+  "Keymap for `concordd-channel-list-mode'.")
 
-(define-derived-mode discord-channel-list-mode special-mode "Discord-Channels"
-  "Major mode for browsing Discord channels."
+(define-derived-mode concordd-channel-list-mode special-mode "Concordd-Channels"
+  "Major mode for browsing Concordd channels."
   (setq buffer-read-only t))
 
-(defvar-local discord-channel-id nil
-  "Channel ID for current Discord channel buffer.")
+(defvar-local concordd-channel-id nil
+  "Channel ID for current Concordd channel buffer.")
 
-(defvar-local discord-channel-name nil
-  "Channel name for current Discord channel buffer.")
+(defvar-local concordd-channel-name nil
+  "Channel name for current Concordd channel buffer.")
 
-(defvar-local discord-channel-guild-id nil
-  "Guild ID for current Discord channel buffer.")
+(defvar-local concordd-channel-guild-id nil
+  "Guild ID for current Concordd channel buffer.")
 
-(defvar-local discord-oldest-message-id nil
+(defvar-local concordd-oldest-message-id nil
   "ID of the oldest message currently loaded in buffer.")
 
-(defvar-local discord-loading-messages nil
+(defvar-local concordd-loading-messages nil
   "Non-nil if currently loading more messages.")
 
-(defvar discord-channel-mode-map
+(defvar concordd-channel-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c C-n") #'discord-compose-message)
-    (define-key map (kbd "C-c C-r") #'discord-reply-to-message-at-point)
-    (define-key map (kbd "C-c C-l") #'discord-channel-reload)
-    (define-key map (kbd "C-c C-p") #'discord-load-more-messages)
-    (define-key map (kbd "C-c C-e") #'discord-edit-message-at-point)
-    (define-key map (kbd "C-c C-d") #'discord-delete-message-at-point)
+    (define-key map (kbd "C-c C-n") #'concordd-compose-message)
+    (define-key map (kbd "C-c C-r") #'concordd-reply-to-message-at-point)
+    (define-key map (kbd "C-c C-l") #'concordd-channel-reload)
+    (define-key map (kbd "C-c C-p") #'concordd-load-more-messages)
+    (define-key map (kbd "C-c C-e") #'concordd-edit-message-at-point)
+    (define-key map (kbd "C-c C-d") #'concordd-delete-message-at-point)
     (define-key map (kbd "q") #'quit-window)
     ;; Evil-friendly bindings (will work in normal state)
-    (define-key map (kbd "n") #'discord-compose-message)
-    (define-key map (kbd "R") #'discord-reply-to-message-at-point)
-    (define-key map (kbd "gr") #'discord-channel-reload)
-    (define-key map (kbd "gp") #'discord-load-more-messages)
-    (define-key map (kbd "p") #'discord-load-more-messages)
-    (define-key map (kbd "e") #'discord-edit-message-at-point)
-    (define-key map (kbd "dd") #'discord-delete-message-at-point)
+    (define-key map (kbd "n") #'concordd-compose-message)
+    (define-key map (kbd "R") #'concordd-reply-to-message-at-point)
+    (define-key map (kbd "gr") #'concordd-channel-reload)
+    (define-key map (kbd "gp") #'concordd-load-more-messages)
+    (define-key map (kbd "p") #'concordd-load-more-messages)
+    (define-key map (kbd "e") #'concordd-edit-message-at-point)
+    (define-key map (kbd "dd") #'concordd-delete-message-at-point)
     map)
-  "Keymap for `discord-channel-mode'.")
+  "Keymap for `concordd-channel-mode'.")
 
-(define-derived-mode discord-channel-mode special-mode "Discord-Channel"
-  "Major mode for Discord channel messages.
+(define-derived-mode concordd-channel-mode special-mode "Concordd-Channel"
+  "Major mode for Concordd channel messages.
 
 Key bindings:
-\\{discord-channel-mode-map}
+\\{concordd-channel-mode-map}
 
 Evil-friendly bindings:
   n   - Compose new message
@@ -708,57 +708,57 @@ Standard bindings:
   
   ;; Evil mode integration
   (when (and (boundp 'evil-mode) evil-mode)
-    (evil-set-initial-state 'discord-channel-mode 'normal))
+    (evil-set-initial-state 'concordd-channel-mode 'normal))
   
   ;; Register event handler for new messages
-  (discord-on 'messageCreated
+  (concordd-on 'messageCreated
               (lambda (params)
-                (discord--handle-message-created params))))
+                (concordd--handle-message-created params))))
 
-(defun discord-compose-message ()
+(defun concordd-compose-message ()
   "Open a compose buffer to send a message to current channel."
   (interactive)
-  (unless discord-channel-id
-    (error "Not in a Discord channel buffer"))
+  (unless concordd-channel-id
+    (error "Not in a Concordd channel buffer"))
   
-  (let* ((channel-id discord-channel-id)
-         (channel-name discord-channel-name)
-         (compose-buf (get-buffer-create (format "*Discord Compose: #%s*" channel-name))))
+  (let* ((channel-id concordd-channel-id)
+         (channel-name concordd-channel-name)
+         (compose-buf (get-buffer-create (format "*Concordd Compose: #%s*" channel-name))))
     (pop-to-buffer compose-buf)
-    (discord-compose-mode)
-    (setq-local discord-channel-id channel-id)
-    (setq-local discord-channel-name channel-name)
+    (concordd-compose-mode)
+    (setq-local concordd-channel-id channel-id)
+    (setq-local concordd-channel-name channel-name)
     (erase-buffer)
     (insert (propertize (format "Composing message for #%s\n" channel-name) 'face 'bold))
     (insert (propertize "Press C-c C-c to send, C-c C-k to cancel\n\n" 'face 'shadow))
     (insert (propertize "──────────────────────\n\n" 'face 'bold))
     (goto-char (point-max))))
 
-(defun discord-reply-to-message-at-point ()
+(defun concordd-reply-to-message-at-point ()
   "Reply to the message at point (not yet implemented)."
   (interactive)
   (message "Reply functionality not yet implemented"))
 
-(defun discord-edit-message-at-point ()
+(defun concordd-edit-message-at-point ()
   "Edit the message at point if it's your own message."
   (interactive)
-  (unless discord-channel-id
-    (error "Not in a Discord channel buffer"))
+  (unless concordd-channel-id
+    (error "Not in a Concordd channel buffer"))
   
-  (let* ((message-id (get-text-property (point) 'discord-message-id))
-         (author-id (get-text-property (point) 'discord-author-id))
-         (content (get-text-property (point) 'discord-message-content)))
+  (let* ((message-id (get-text-property (point) 'concordd-message-id))
+         (author-id (get-text-property (point) 'concordd-author-id))
+         (content (get-text-property (point) 'concordd-message-content)))
     
     (unless message-id
       (error "No message at point"))
     
     ;; We need to get the current user ID to check ownership
     ;; For now, we'll just try to edit - the server will reject if not owned
-    (let ((edit-buf (get-buffer-create (format "*Discord Edit: %s*" message-id))))
+    (let ((edit-buf (get-buffer-create (format "*Concordd Edit: %s*" message-id))))
       (pop-to-buffer edit-buf)
-      (discord-compose-mode)
-      (setq-local discord-channel-id discord-channel-id)
-      (setq-local discord-editing-message-id message-id)
+      (concordd-compose-mode)
+      (setq-local concordd-channel-id concordd-channel-id)
+      (setq-local concordd-editing-message-id message-id)
       (erase-buffer)
       (insert (propertize "Editing message\n" 'face 'bold))
       (insert (propertize "Press C-c C-c to save, C-c C-k to cancel\n\n" 'face 'shadow))
@@ -766,49 +766,49 @@ Standard bindings:
       (insert content)
       (goto-char (point-max)))))
 
-(defun discord-delete-message-at-point ()
+(defun concordd-delete-message-at-point ()
   "Delete the message at point if it's your own message."
   (interactive)
-  (unless discord-channel-id
-    (error "Not in a Discord channel buffer"))
+  (unless concordd-channel-id
+    (error "Not in a Concordd channel buffer"))
   
-  (let ((message-id (get-text-property (point) 'discord-message-id)))
+  (let ((message-id (get-text-property (point) 'concordd-message-id)))
     
     (unless message-id
       (error "No message at point"))
     
     (when (y-or-n-p "Delete this message? ")
-      (discord-delete-message
-       discord-channel-id
+      (concordd-delete-message
+       concordd-channel-id
        message-id
        (lambda (_result)
          (message "Message deleted"))))))
 
-(defun discord-channel-reload ()
+(defun concordd-channel-reload ()
   "Reload messages in current channel."
   (interactive)
-  (when discord-channel-id
-    (setq discord-oldest-message-id nil)
-    (setq discord-loading-messages nil)
-    (discord--load-channel-messages discord-channel-id)))
+  (when concordd-channel-id
+    (setq concordd-oldest-message-id nil)
+    (setq concordd-loading-messages nil)
+    (concordd--load-channel-messages concordd-channel-id)))
 
 ;;; Compose mode
 
-(defvar-local discord-editing-message-id nil
+(defvar-local concordd-editing-message-id nil
   "Message ID being edited, if any.")
 
-(defvar discord-compose-mode-map
+(defvar concordd-compose-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c C-c") #'discord-compose-send)
-    (define-key map (kbd "C-c C-k") #'discord-compose-cancel)
+    (define-key map (kbd "C-c C-c") #'concordd-compose-send)
+    (define-key map (kbd "C-c C-k") #'concordd-compose-cancel)
     map)
-  "Keymap for `discord-compose-mode'.")
+  "Keymap for `concordd-compose-mode'.")
 
-(define-derived-mode discord-compose-mode text-mode "Discord-Compose"
-  "Major mode for composing Discord messages.
+(define-derived-mode concordd-compose-mode text-mode "Concordd-Compose"
+  "Major mode for composing Concordd messages.
 
 Key bindings:
-\\{discord-compose-mode-map}
+\\{concordd-compose-mode-map}
 
   C-c C-c - Send message
   C-c C-k - Cancel"
@@ -816,14 +816,14 @@ Key bindings:
   
   ;; Evil mode integration - start in insert state
   (when (and (boundp 'evil-mode) evil-mode)
-    (evil-set-initial-state 'discord-compose-mode 'insert)
+    (evil-set-initial-state 'concordd-compose-mode 'insert)
     (evil-insert-state)))
 
-(defun discord-compose-send ()
+(defun concordd-compose-send ()
   "Send the message from compose buffer."
   (interactive)
-  (unless discord-channel-id
-    (error "Not in a Discord compose buffer"))
+  (unless concordd-channel-id
+    (error "Not in a Concordd compose buffer"))
   
   ;; Find the content after the separator
   (save-excursion
@@ -831,38 +831,38 @@ Key bindings:
     (when (search-forward "──────────────────────\n\n" nil t)
       (let ((content (string-trim (buffer-substring (point) (point-max)))))
         (when (> (length content) 0)
-          (if discord-editing-message-id
+          (if concordd-editing-message-id
               ;; Editing existing message
-              (discord-edit-message
-               discord-channel-id
-               discord-editing-message-id
+              (concordd-edit-message
+               concordd-channel-id
+               concordd-editing-message-id
                content
                (lambda (result)
                  (message "Message edited!")))
             ;; Sending new message
-            (discord-send-message
-             discord-channel-id
+            (concordd-send-message
+             concordd-channel-id
              content
              (lambda (result)
                (message "Message sent!"))))
           (kill-buffer (current-buffer)))))))
 
-(defun discord-compose-cancel ()
+(defun concordd-compose-cancel ()
   "Cancel composing and close the buffer."
   (interactive)
   (when (y-or-n-p "Discard message? ")
     (kill-buffer (current-buffer))))
 
 
-(defun discord--handle-message-created (params)
+(defun concordd--handle-message-created (params)
   "Handle messageCreated event with PARAMS."
   (let* ((msg (plist-get params :message))
          (channel-id (plist-get msg :channelId)))
     ;; Update buffer if it exists and matches
     (dolist (buf (buffer-list))
       (with-current-buffer buf
-        (when (and (eq major-mode 'discord-channel-mode)
-                   (string= discord-channel-id channel-id))
+        (when (and (eq major-mode 'concordd-channel-mode)
+                   (string= concordd-channel-id channel-id))
           (let ((inhibit-read-only t))
             (save-excursion
               ;; Find the separator line and insert before it
@@ -872,14 +872,14 @@ Key bindings:
                     (forward-line -1)
                     (insert "\n")
                     (forward-line -1)
-                    (discord--insert-message msg))
+                    (concordd--insert-message msg))
                 ;; No separator yet, just append
                 (goto-char (point-max))
                 (insert "\n")
-                (discord--insert-message msg)))))))))
+                (concordd--insert-message msg)))))))))
 
 ;;; Provide
 
-(provide 'discord)
+(provide 'concordd)
 
-;;; discord.el ends here
+;;; concordd.el ends here
