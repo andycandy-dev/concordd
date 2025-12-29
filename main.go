@@ -29,6 +29,64 @@ var rootCmd = &cobra.Command{
 an IPC interface via Unix domain socket for external clients (e.g., Emacs).`,
 }
 
+var loginCmd = &cobra.Command{
+	Use:   "login",
+	Short: "Login to Discord and store token",
+	Long:  `Interactive login to Discord. Stores the token in the system keychain.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Println("Starting Discord login...")
+		
+		// Try to launch the login form UI if available
+		// For now, we'll provide instructions for manual token entry
+		fmt.Println("\nTo get your Discord token:")
+		fmt.Println("1. Open Discord in your browser")
+		fmt.Println("2. Press F12 to open Developer Tools")
+		fmt.Println("3. Go to the 'Network' tab")
+		fmt.Println("4. Filter for '/api'")
+		fmt.Println("5. Look for any request and find the 'authorization' header")
+		fmt.Println("6. Copy the token value")
+		fmt.Println("\nOr use the --token flag to provide it directly")
+		
+		if token != "" {
+			// Store the provided token
+			if err := keyring.SetToken(token); err != nil {
+				return fmt.Errorf("failed to store token in keychain: %w", err)
+			}
+			fmt.Println("\n✓ Token stored successfully in keychain!")
+			return nil
+		}
+		
+		// Prompt for token
+		fmt.Print("\nEnter your Discord token (input will be hidden): ")
+		var inputToken string
+		fmt.Scanln(&inputToken)
+		
+		if inputToken == "" {
+			return fmt.Errorf("no token provided")
+		}
+		
+		if err := keyring.SetToken(inputToken); err != nil {
+			return fmt.Errorf("failed to store token in keychain: %w", err)
+		}
+		
+		fmt.Println("\n✓ Token stored successfully in keychain!")
+		return nil
+	},
+}
+
+var logoutCmd = &cobra.Command{
+	Use:   "logout",
+	Short: "Remove token from keychain",
+	Long:  `Remove the stored Discord token from the system keychain.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := keyring.DeleteToken(); err != nil {
+			return fmt.Errorf("failed to delete token from keychain: %w", err)
+		}
+		fmt.Println("✓ Token removed from keychain")
+		return nil
+	},
+}
+
 var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the daemon",
@@ -120,7 +178,12 @@ func init() {
 	startCmd.Flags().IntVar(&historySize, "history-size", 100, "message cache size per channel")
 	startCmd.Flags().StringVar(&configPath, "config", "", "config file path")
 
+	// Login command flags
+	loginCmd.Flags().StringVar(&token, "token", "", "Discord token to store in keychain")
+
 	rootCmd.AddCommand(startCmd)
+	rootCmd.AddCommand(loginCmd)
+	rootCmd.AddCommand(logoutCmd)
 }
 
 func main() {

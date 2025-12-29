@@ -20,7 +20,7 @@
             
             # This hash will need to be updated after first build
             # Run: nix build to get the correct hash
-            vendorHash = null;
+            vendorHash = "sha256-3JRjJqQDfyLOEh59ciJ5UsC/rSYNBDBwnko40PnjV2o=";
 
             ldflags = [
               "-s"
