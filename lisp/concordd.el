@@ -117,6 +117,17 @@ CALLBACK is called with a list of channel objects."
    `(:guildId ,guild-id)
    callback))
 
+(defun concordd-list-forum-channels (guild-id callback)
+  "List forum channels in GUILD-ID.
+CALLBACK is called with a list of forum channel objects (type 15)."
+  (concordd-list-channels guild-id
+    (lambda (result)
+      (let* ((channels (plist-get result :channels))
+             (forum-channels (seq-filter 
+                             (lambda (ch) (= (plist-get ch :type) 15))
+                             channels)))
+        (funcall callback (list :channels forum-channels))))))
+
 (defun concordd-get-messages (channel-id callback &optional limit before)
   "Get messages from CHANNEL-ID.
 CALLBACK is called with a list of message objects.
@@ -192,6 +203,70 @@ Optional CALLBACK is called on completion."
    "deleteMessage"
    `(:channelId ,channel-id :messageId ,message-id)
    (or callback (lambda (_result) (message "Message deleted")))))
+
+;;; Thread/Forum methods
+
+(defun concordd-list-threads (channel-id callback &optional archived)
+  "List threads in CHANNEL-ID.
+CALLBACK is called with the result containing :threads list.
+Optional ARCHIVED includes archived threads when non-nil."
+  (concordd-ipc-send-request
+   "listThreads"
+   `(:channelId ,channel-id :archived ,(if archived t :json-false))
+   callback))
+
+(defun concordd-create-thread (channel-id name callback &optional message-id auto-archive-duration)
+  "Create a thread in CHANNEL-ID with NAME.
+CALLBACK is called with the thread object.
+Optional MESSAGE-ID creates a thread from that message.
+Optional AUTO-ARCHIVE-DURATION is duration in minutes (60, 1440, 4320, 10080)."
+  (let ((params `(:channelId ,channel-id :name ,name)))
+    (when message-id
+      (setq params (plist-put params :messageId message-id)))
+    (when auto-archive-duration
+      (setq params (plist-put params :autoArchiveDuration auto-archive-duration)))
+    (concordd-ipc-send-request "createThread" params callback)))
+
+(defun concordd-create-forum-post (channel-id name content callback &optional tags)
+  "Create a forum post in CHANNEL-ID with NAME and CONTENT.
+CALLBACK is called with result containing :thread and :message.
+Optional TAGS is a list of tag ID strings."
+  (let ((params `(:channelId ,channel-id :name ,name :content ,content)))
+    (when tags
+      (setq params (plist-put params :tags (vconcat tags))))
+    (concordd-ipc-send-request "createForumPost" params callback)))
+
+(defun concordd-join-thread (thread-id &optional callback)
+  "Join THREAD-ID.
+Optional CALLBACK is called on completion."
+  (concordd-ipc-send-request
+   "joinThread"
+   `(:threadId ,thread-id)
+   (or callback (lambda (_result) (message "Joined thread")))))
+
+(defun concordd-leave-thread (thread-id &optional callback)
+  "Leave THREAD-ID.
+Optional CALLBACK is called on completion."
+  (concordd-ipc-send-request
+   "leaveThread"
+   `(:threadId ,thread-id)
+   (or callback (lambda (_result) (message "Left thread")))))
+
+(defun concordd-archive-thread (thread-id &optional callback)
+  "Archive THREAD-ID.
+Optional CALLBACK is called on completion."
+  (concordd-ipc-send-request
+   "archiveThread"
+   `(:threadId ,thread-id)
+   (or callback (lambda (_result) (message "Thread archived")))))
+
+(defun concordd-get-forum-tags (channel-id callback)
+  "Get available forum tags for CHANNEL-ID.
+CALLBACK is called with result containing :tags list."
+  (concordd-ipc-send-request
+   "getForumTags"
+   `(:channelId ,channel-id)
+   callback))
 
 ;;; UI entry point
 

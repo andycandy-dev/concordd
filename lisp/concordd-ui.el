@@ -46,7 +46,30 @@
 (defvar-local concordd-ui-editing-message-id nil
   "Message ID being edited, if any.")
 
+;;; Channel type handling
+
+(defvar concordd-ui-channel-type-info
+  '((0  . (:icon "#"  :handler concordd-ui-open-channel :name "Text"))
+    (2  . (:icon "🔊" :handler concordd-ui-open-channel :name "Voice"))
+    (5  . (:icon "📢" :handler concordd-ui-open-channel :name "Announcement"))
+    (15 . (:icon "💬" :handler concordd-ui-open-forum   :name "Forum")))
+  "Channel type information: type -> (:icon :handler :name).")
+
+(defun concordd-ui--channel-type-info (type)
+  "Get channel type info for TYPE."
+  (cdr (assoc type concordd-ui-channel-type-info)))
+
+(defun concordd-ui--channel-displayable-p (type)
+  "Return non-nil if channel TYPE should be displayed in channel list."
+  (assoc type concordd-ui-channel-type-info))
+
 ;;; Guild list
+
+(defun concordd-ui--get-guild-name (guild-id)
+  "Get guild name for GUILD-ID from cached guilds."
+  (cl-loop for g in concordd-ui-guilds
+           when (string= (plist-get g :id) guild-id)
+           return (plist-get g :name)))
 
 (defun concordd-ui-show-guild-list (guilds)
   "Show list of GUILDS in a buffer."
@@ -80,10 +103,9 @@
 
 (defun concordd-ui-show-channel-list (channels)
   "Show list of CHANNELS in a buffer."
-  (let ((buf (get-buffer-create "*Concordd Channels*"))
-        (guild-name (cl-loop for g in concordd-ui-guilds
-                            when (string= (plist-get g :id) concordd-ui-current-guild)
-                            return (plist-get g :name))))
+  (let* ((buf (get-buffer-create (format "*Concordd: %s*" 
+                                         (concordd-ui--get-guild-name concordd-ui-current-guild))))
+         (guild-name (concordd-ui--get-guild-name concordd-ui-current-guild)))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
@@ -93,25 +115,30 @@
           (let* ((name (plist-get channel :name))
                  (id (plist-get channel :id))
                  (unread (plist-get channel :unread))
-                 (mentioned (plist-get channel :mentioned)))
-            (when (= (plist-get channel :type) 0) ; Text channel
+                 (mentioned (plist-get channel :mentioned))
+                 (type (plist-get channel :type))
+                 (type-info (concordd-ui--channel-type-info type)))
+            (when type-info
               (when mentioned
                 (insert "@ "))
               (when unread
                 (insert "● "))
-              (insert-button (format "#%s" name)
-                            'action (lambda (_btn) (concordd-ui-open-channel id name))
-                            'follow-link t)
+              (let ((icon (plist-get type-info :icon))
+                    (handler (plist-get type-info :handler)))
+                (insert-button (format "%s%s" icon name)
+                              'action (lambda (_btn) (funcall handler id name type))
+                              'follow-link t))
               (insert "\n")))))
       (goto-char (point-min)))
     (pop-to-buffer buf)))
 
 ;;; Channel messages
 
-(defun concordd-ui-open-channel (channel-id channel-name)
-  "Open messages for CHANNEL-ID with CHANNEL-NAME."
+(defun concordd-ui-open-channel (channel-id channel-name channel-type)
+  "Open messages for CHANNEL-ID with CHANNEL-NAME of CHANNEL-TYPE."
   (setq concordd-ui-current-channel channel-id)
-  (let ((buf (get-buffer-create (format "*Concordd: #%s*" channel-name))))
+  (let* ((guild-name (concordd-ui--get-guild-name concordd-ui-current-guild))
+         (buf (get-buffer-create (format "*Concordd: %s#%s*" guild-name channel-name))))
     (with-current-buffer buf
       (concordd-ui-channel-mode)
       (setq-local concordd-ui-channel-id channel-id)
@@ -328,6 +355,87 @@ If KEEP-POSITION is non-nil, try to maintain cursor position."
                 (insert "\n")
                 (concordd-ui-insert-message msg)))))))))
 
+;;; Forum channel handling
+
+(defun concordd-ui-open-forum (channel-id channel-name channel-type)
+  "Open forum browser for CHANNEL-ID with CHANNEL-NAME.
+CHANNEL-TYPE should be 15 (GuildForum)."
+  (setq concordd-ui-current-channel channel-id)
+  (let* ((guild-name (concordd-ui--get-guild-name concordd-ui-current-guild))
+         (buf (get-buffer-create (format "*Concordd: %s#%s*" guild-name channel-name))))
+    (with-current-buffer buf
+      (concordd-ui-forum-mode)
+      (setq-local concordd-ui-channel-id channel-id)
+      (setq-local concordd-ui-channel-name channel-name)
+      (setq-local concordd-ui-channel-guild-id concordd-ui-current-guild)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (propertize (format "Forum: 💬%s\n\n" channel-name) 'face 'bold))
+        (insert "Loading threads...\n\n")
+        (insert (propertize "Keybindings: RET=open thread, n=new post, gr=reload, q=quit\n" 'face 'shadow))))
+    (pop-to-buffer buf)
+    
+    ;; Load threads
+    (concordd-list-threads
+     channel-id
+     (lambda (result)
+       (let ((threads (plist-get result :threads)))
+         (with-current-buffer buf
+           (let ((inhibit-read-only t))
+             (erase-buffer)
+             (insert (propertize (format "Forum: 💬%s\n\n" channel-name) 'face 'bold))
+             (if (null threads)
+                 (insert "No threads in this forum.\n")
+               (dolist (thread threads)
+                 (concordd-ui-insert-forum-thread thread)))
+             (insert "\n")
+             (insert (propertize "Keybindings: RET=open thread, n=new post, gr=reload, q=quit\n" 'face 'shadow))
+             (goto-char (point-min))
+             (forward-line 2))))))))
+
+(defun concordd-ui-insert-forum-thread (thread)
+  "Insert a THREAD entry in the forum browser."
+  (let* ((thread-id (plist-get thread :id))
+         (thread-name (plist-get thread :name))
+         (message-count (plist-get thread :messageCount))
+         (archived (plist-get thread :archived))
+         (start-pos (point)))
+    (insert-button (format "%s%s"
+                          (if archived "[ARCHIVED] " "")
+                          thread-name)
+                  'action (lambda (_btn) (concordd-ui-open-thread thread-id thread-name))
+                  'follow-link t)
+    (insert (format " (%d messages)" message-count))
+    (insert "\n")))
+
+(defun concordd-ui-open-thread (thread-id thread-name)
+  "Open THREAD-ID with THREAD-NAME for viewing."
+  (let* ((guild-name (concordd-ui--get-guild-name concordd-ui-current-guild))
+         (channel-name concordd-ui-channel-name)
+         (buf (get-buffer-create (format "*Concordd: %s#%s#%s*" guild-name channel-name thread-name))))
+    (with-current-buffer buf
+      (concordd-ui-channel-mode)
+      (setq-local concordd-ui-channel-id thread-id)
+      (setq-local concordd-ui-channel-name thread-name)
+      (setq-local concordd-ui-channel-guild-id concordd-ui-current-guild)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (propertize (format "Thread: #%s\n\n" thread-name) 'face 'bold))
+        (insert "Loading messages...\n\n")
+        (insert (propertize "Keybindings: n=reply, p=load more, gr=reload, q=quit\n" 'face 'shadow))))
+    (pop-to-buffer buf)
+    
+    ;; Join thread first, then load messages
+    (concordd-join-thread
+     thread-id
+     (lambda (_result)
+       (concordd-get-messages
+        thread-id
+        (lambda (result)
+          (let ((messages (reverse (plist-get result :messages))))
+            (with-current-buffer buf
+              (concordd-ui-display-messages thread-id messages nil)))))))))
+
 ;;; Major modes
 
 (defvar concordd-ui-guild-list-mode-map
@@ -351,6 +459,35 @@ If KEEP-POSITION is non-nil, try to maintain cursor position."
 (define-derived-mode concordd-ui-channel-list-mode special-mode "Concordd-Channels"
   "Major mode for browsing Concordd channels."
   (setq buffer-read-only t))
+
+(defvar concordd-ui-forum-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'concordd-ui-open-thread-at-point)
+    (define-key map (kbd "n") #'concordd-ui-compose-forum-post)
+    (define-key map (kbd "g") #'revert-buffer)
+    (define-key map (kbd "q") #'quit-window)
+    map)
+  "Keymap for `concordd-ui-forum-mode'.")
+
+(define-derived-mode concordd-ui-forum-mode special-mode "Concordd-Forum"
+  "Major mode for browsing forum threads."
+  (setq buffer-read-only t)
+  (setq revert-buffer-function
+        (lambda (&rest _)
+          (when concordd-ui-channel-id
+            (concordd-ui-open-forum concordd-ui-channel-id 
+                                   concordd-ui-channel-name 
+                                   15)))))
+
+(defun concordd-ui-open-thread-at-point ()
+  "Open the thread at point."
+  (interactive)
+  (push-button))
+
+(defun concordd-ui-compose-forum-post ()
+  "Compose a new forum post."
+  (interactive)
+  (message "Forum post composition not yet implemented"))
 
 (defvar concordd-ui-channel-mode-map
   (let ((map (make-sparse-keymap)))
@@ -411,7 +548,8 @@ Standard bindings:
   
   (let* ((channel-id concordd-ui-channel-id)
          (channel-name concordd-ui-channel-name)
-         (compose-buf (get-buffer-create (format "*Concordd Compose: #%s*" channel-name))))
+         (guild-name (concordd-ui--get-guild-name concordd-ui-channel-guild-id))
+         (compose-buf (get-buffer-create (format "*Concordd: %s#%s [Compose]*" guild-name channel-name))))
     (pop-to-buffer compose-buf)
     (concordd-ui-compose-mode)
     (setq-local concordd-ui-channel-id channel-id)
@@ -439,7 +577,10 @@ Standard bindings:
     (unless message-id
       (error "No message at point"))
     
-    (let ((edit-buf (get-buffer-create (format "*Concordd Edit: %s*" message-id))))
+    (let* ((edit-buf (get-buffer-create (format "*Concordd: %s#%s [Edit: %s]*" 
+                                                (concordd-ui--get-guild-name concordd-ui-channel-guild-id)
+                                                concordd-ui-channel-name
+                                                message-id))))
       (pop-to-buffer edit-buf)
       (concordd-ui-compose-mode)
       (setq-local concordd-ui-channel-id concordd-ui-channel-id)
