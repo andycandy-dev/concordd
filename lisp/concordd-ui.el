@@ -119,9 +119,9 @@
                  (type (plist-get channel :type))
                  (type-info (concordd-ui--channel-type-info type)))
             (when type-info
-              (when mentioned
+              (when (eq mentioned t)
                 (insert "@ "))
-              (when unread
+              (when (eq unread t)
                 (insert "● "))
               (let ((icon (plist-get type-info :icon))
                     (handler (plist-get type-info :handler)))
