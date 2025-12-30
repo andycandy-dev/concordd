@@ -418,7 +418,7 @@ func (dc *DiscordClient) GetGuildRoles(guildID discord.GuildID) ([]Role, error) 
 }
 
 // ListThreads lists threads in a channel
-func (dc *DiscordClient) ListThreads(channelID discord.ChannelID, archived bool) ([]Thread, error) {
+func (dc *DiscordClient) ListThreads(channelID discord.ChannelID) ([]Thread, error) {
 	if !dc.IsConnected() {
 		return nil, NewError(NotConnected, "Not connected to Discord")
 	}
@@ -429,31 +429,21 @@ func (dc *DiscordClient) ListThreads(channelID discord.ChannelID, archived bool)
 		return nil, NewError(ChannelNotFound, fmt.Sprintf("Failed to get channel: %v", err))
 	}
 
+	// Get all channels from the guild - this includes threads from GuildCreateEvent
+	allChannels, err := dc.state.Cabinet.Channels(channel.GuildID)
+	if err != nil {
+		return nil, NewError(DiscordAPIError, fmt.Sprintf("Failed to get channels: %v", err))
+	}
+
 	var threads []discord.Channel
-
-	if archived {
-		// Get archived threads via API
-		archivedThreads, err := dc.state.PublicArchivedThreads(channelID, discord.Timestamp{}, 100)
-		if err != nil {
-			return nil, NewError(DiscordAPIError, fmt.Sprintf("Failed to get archived threads: %v", err))
-		}
-		threads = archivedThreads.Threads
-	} else {
-		// Get active threads from state cache (works for regular users, not just bots)
-		// This retrieves all channels in the guild, which includes active threads from GuildCreateEvent
-		allChannels, err := dc.state.Cabinet.Channels(channel.GuildID)
-		if err != nil {
-			return nil, NewError(DiscordAPIError, fmt.Sprintf("Failed to get channels: %v", err))
-		}
-
-		// Filter for threads that belong to this channel
-		for _, ch := range allChannels {
-			if ch.ParentID == channelID && 
-				(ch.Type == discord.GuildPublicThread ||
-				 ch.Type == discord.GuildPrivateThread ||
-				 ch.Type == discord.GuildAnnouncementThread) {
-				threads = append(threads, ch)
-			}
+	
+	// Filter for threads that belong to this channel
+	for _, ch := range allChannels {
+		if ch.ParentID == channelID && 
+			(ch.Type == discord.GuildPublicThread ||
+			 ch.Type == discord.GuildPrivateThread ||
+			 ch.Type == discord.GuildAnnouncementThread) {
+			threads = append(threads, ch)
 		}
 	}
 

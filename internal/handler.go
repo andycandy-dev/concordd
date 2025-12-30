@@ -381,7 +381,6 @@ func (h *Handler) handleGetGuildRoles(params json.RawMessage) (interface{}, erro
 func (h *Handler) handleListThreads(params json.RawMessage) (interface{}, error) {
 	var req struct {
 		ChannelID string `json:"channelId"`
-		Archived  bool   `json:"archived,omitempty"`
 	}
 
 	if err := json.Unmarshal(params, &req); err != nil {
@@ -393,7 +392,7 @@ func (h *Handler) handleListThreads(params json.RawMessage) (interface{}, error)
 		return nil, NewError(InvalidParams, "Invalid channel ID")
 	}
 
-	threads, err := h.discord.ListThreads(discord.ChannelID(channelID), req.Archived)
+	threads, err := h.discord.ListThreads(discord.ChannelID(channelID))
 	if err != nil {
 		return nil, err
 	}

@@ -206,13 +206,12 @@ Optional CALLBACK is called on completion."
 
 ;;; Thread/Forum methods
 
-(defun concordd-list-threads (channel-id callback &optional archived)
+(defun concordd-list-threads (channel-id callback)
   "List threads in CHANNEL-ID.
-CALLBACK is called with the result containing :threads list.
-Optional ARCHIVED includes archived threads when non-nil."
+CALLBACK is called with the result containing :threads list."
   (concordd-ipc-send-request
    "listThreads"
-   `(:channelId ,channel-id :archived ,(if archived t :json-false))
+   `(:channelId ,channel-id)
    callback))
 
 (defun concordd-create-thread (channel-id name callback &optional message-id auto-archive-duration)

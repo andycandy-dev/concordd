@@ -397,12 +397,8 @@ CHANNEL-TYPE should be 15 (GuildForum)."
   "Insert a THREAD entry in the forum browser."
   (let* ((thread-id (plist-get thread :id))
          (thread-name (plist-get thread :name))
-         (message-count (plist-get thread :messageCount))
-         (archived (plist-get thread :archived))
-         (start-pos (point)))
-    (insert-button (format "%s%s"
-                          (if archived "[ARCHIVED] " "")
-                          thread-name)
+         (message-count (plist-get thread :messageCount)))
+    (insert-button thread-name
                   'action (lambda (_btn) (concordd-ui-open-thread thread-id thread-name))
                   'follow-link t)
     (insert (format " (%d messages)" message-count))
