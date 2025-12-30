@@ -86,6 +86,34 @@ type Role struct {
 	Mentionable bool   `json:"mentionable"` // Whether can be @mentioned
 }
 
+// Thread represents a Discord thread
+type Thread struct {
+	ID                  string   `json:"id"`
+	GuildID             string   `json:"guildId"`
+	ParentID            string   `json:"parentId"` // Parent channel
+	Name                string   `json:"name"`
+	Type                int      `json:"type"`
+	MessageCount        int      `json:"messageCount"`
+	MemberCount         int      `json:"memberCount"`
+	Archived            bool     `json:"archived"`
+	Locked              bool     `json:"locked"`
+	Invitable           bool     `json:"invitable,omitempty"`
+	AutoArchiveDuration int      `json:"autoArchiveDuration"`
+	ArchiveTimestamp    string   `json:"archiveTimestamp"`
+	CreateTimestamp     string   `json:"createTimestamp,omitempty"`
+	IsJoined            bool     `json:"isJoined"` // Whether current user joined
+	AppliedTags         []string `json:"appliedTags,omitempty"` // For forum posts
+}
+
+// Tag represents a forum tag
+type Tag struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Moderated bool   `json:"moderated"`
+	EmojiID   string `json:"emojiId,omitempty"`
+	EmojiName string `json:"emojiName,omitempty"`
+}
+
 // Helper functions to convert from arikawa types to IPC DTOs
 
 // ToUser converts arikawa User to IPC User
@@ -199,4 +227,59 @@ func ToRole(r discord.Role) Role {
 		Permissions: fmt.Sprintf("%d", r.Permissions), // Convert uint64 to string
 		Mentionable: r.Mentionable,
 	}
+}
+
+// ToThread converts arikawa Channel (thread) to IPC Thread
+func ToThread(c discord.Channel, isJoined bool) Thread {
+	thread := Thread{
+		ID:       c.ID.String(),
+		GuildID:  c.GuildID.String(),
+		ParentID: c.ParentID.String(),
+		Name:     c.Name,
+		Type:     int(c.Type),
+		MessageCount: c.MessageCount,
+		MemberCount:  c.MemberCount,
+		IsJoined:     isJoined,
+	}
+
+	// Add thread metadata if available
+	if c.ThreadMetadata != nil {
+		thread.Archived = c.ThreadMetadata.Archived
+		thread.Locked = c.ThreadMetadata.Locked
+		thread.Invitable = c.ThreadMetadata.Invitable
+		thread.AutoArchiveDuration = int(c.ThreadMetadata.AutoArchiveDuration)
+		thread.ArchiveTimestamp = c.ThreadMetadata.ArchiveTimestamp.Time().Format(time.RFC3339)
+		
+		if c.ThreadMetadata.CreateTimestamp != nil && c.ThreadMetadata.CreateTimestamp.IsValid() {
+			thread.CreateTimestamp = c.ThreadMetadata.CreateTimestamp.Time().Format(time.RFC3339)
+		}
+	}
+
+	// Add applied tags for forum posts
+	if len(c.AppliedTags) > 0 {
+		thread.AppliedTags = make([]string, len(c.AppliedTags))
+		for i, tag := range c.AppliedTags {
+			thread.AppliedTags[i] = tag.String()
+		}
+	}
+
+	return thread
+}
+
+// ToTag converts arikawa Tag to IPC Tag
+func ToTag(t discord.Tag) Tag {
+	tag := Tag{
+		ID:        t.ID.String(),
+		Name:      t.Name,
+		Moderated: t.Moderated,
+	}
+
+	if t.EmojiID.IsValid() {
+		tag.EmojiID = t.EmojiID.String()
+	}
+	if t.EmojiName != nil && *t.EmojiName != "" {
+		tag.EmojiName = *t.EmojiName
+	}
+
+	return tag
 }

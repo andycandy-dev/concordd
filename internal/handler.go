@@ -45,6 +45,15 @@ func (h *Handler) SetDiscordClient(dc *DiscordClient) {
 	h.RegisterMethod("getReadState", h.handleGetReadState)
 	h.RegisterMethod("getGuildMembers", h.handleGetGuildMembers)
 	h.RegisterMethod("getGuildRoles", h.handleGetGuildRoles)
+	
+	// Thread methods
+	h.RegisterMethod("listThreads", h.handleListThreads)
+	h.RegisterMethod("createThread", h.handleCreateThread)
+	h.RegisterMethod("createForumPost", h.handleCreateForumPost)
+	h.RegisterMethod("joinThread", h.handleJoinThread)
+	h.RegisterMethod("leaveThread", h.handleLeaveThread)
+	h.RegisterMethod("archiveThread", h.handleArchiveThread)
+	h.RegisterMethod("getForumTags", h.handleGetForumTags)
 }
 
 // RegisterMethod registers a method handler
@@ -365,5 +374,194 @@ func (h *Handler) handleGetGuildRoles(params json.RawMessage) (interface{}, erro
 
 	return map[string]interface{}{
 		"roles": roles,
+	}, nil
+}
+
+// handleListThreads handles the listThreads method
+func (h *Handler) handleListThreads(params json.RawMessage) (interface{}, error) {
+	var req struct {
+		ChannelID string `json:"channelId"`
+		Archived  bool   `json:"archived,omitempty"`
+	}
+
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, NewError(InvalidParams, "Invalid parameters")
+	}
+
+	channelID, err := discord.ParseSnowflake(req.ChannelID)
+	if err != nil {
+		return nil, NewError(InvalidParams, "Invalid channel ID")
+	}
+
+	threads, err := h.discord.ListThreads(discord.ChannelID(channelID), req.Archived)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"threads": threads,
+	}, nil
+}
+
+// handleCreateThread handles the createThread method
+func (h *Handler) handleCreateThread(params json.RawMessage) (interface{}, error) {
+	var req struct {
+		ChannelID           string `json:"channelId"`
+		MessageID           string `json:"messageId,omitempty"`
+		Name                string `json:"name"`
+		AutoArchiveDuration int    `json:"autoArchiveDuration,omitempty"`
+	}
+
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, NewError(InvalidParams, "Invalid parameters")
+	}
+
+	channelID, err := discord.ParseSnowflake(req.ChannelID)
+	if err != nil {
+		return nil, NewError(InvalidParams, "Invalid channel ID")
+	}
+
+	var messageID discord.MessageID
+	if req.MessageID != "" {
+		mid, err := discord.ParseSnowflake(req.MessageID)
+		if err != nil {
+			return nil, NewError(InvalidParams, "Invalid message ID")
+		}
+		messageID = discord.MessageID(mid)
+	}
+
+	thread, err := h.discord.CreateThread(discord.ChannelID(channelID), messageID, req.Name, req.AutoArchiveDuration)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"thread": thread,
+	}, nil
+}
+
+// handleCreateForumPost handles the createForumPost method
+func (h *Handler) handleCreateForumPost(params json.RawMessage) (interface{}, error) {
+	var req struct {
+		ChannelID string   `json:"channelId"`
+		Name      string   `json:"name"`
+		Content   string   `json:"content"`
+		Tags      []string `json:"tags,omitempty"`
+	}
+
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, NewError(InvalidParams, "Invalid parameters")
+	}
+
+	channelID, err := discord.ParseSnowflake(req.ChannelID)
+	if err != nil {
+		return nil, NewError(InvalidParams, "Invalid channel ID")
+	}
+
+	thread, message, err := h.discord.CreateForumPost(discord.ChannelID(channelID), req.Name, req.Content, req.Tags)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"thread":  thread,
+		"message": message,
+	}, nil
+}
+
+// handleJoinThread handles the joinThread method
+func (h *Handler) handleJoinThread(params json.RawMessage) (interface{}, error) {
+	var req struct {
+		ThreadID string `json:"threadId"`
+	}
+
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, NewError(InvalidParams, "Invalid parameters")
+	}
+
+	threadID, err := discord.ParseSnowflake(req.ThreadID)
+	if err != nil {
+		return nil, NewError(InvalidParams, "Invalid thread ID")
+	}
+
+	if err := h.discord.JoinThread(discord.ChannelID(threadID)); err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"success": true,
+	}, nil
+}
+
+// handleLeaveThread handles the leaveThread method
+func (h *Handler) handleLeaveThread(params json.RawMessage) (interface{}, error) {
+	var req struct {
+		ThreadID string `json:"threadId"`
+	}
+
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, NewError(InvalidParams, "Invalid parameters")
+	}
+
+	threadID, err := discord.ParseSnowflake(req.ThreadID)
+	if err != nil {
+		return nil, NewError(InvalidParams, "Invalid thread ID")
+	}
+
+	if err := h.discord.LeaveThread(discord.ChannelID(threadID)); err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"success": true,
+	}, nil
+}
+
+// handleArchiveThread handles the archiveThread method
+func (h *Handler) handleArchiveThread(params json.RawMessage) (interface{}, error) {
+	var req struct {
+		ThreadID string `json:"threadId"`
+	}
+
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, NewError(InvalidParams, "Invalid parameters")
+	}
+
+	threadID, err := discord.ParseSnowflake(req.ThreadID)
+	if err != nil {
+		return nil, NewError(InvalidParams, "Invalid thread ID")
+	}
+
+	if err := h.discord.ArchiveThread(discord.ChannelID(threadID)); err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"success": true,
+	}, nil
+}
+
+// handleGetForumTags handles the getForumTags method
+func (h *Handler) handleGetForumTags(params json.RawMessage) (interface{}, error) {
+	var req struct {
+		ChannelID string `json:"channelId"`
+	}
+
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, NewError(InvalidParams, "Invalid parameters")
+	}
+
+	channelID, err := discord.ParseSnowflake(req.ChannelID)
+	if err != nil {
+		return nil, NewError(InvalidParams, "Invalid channel ID")
+	}
+
+	tags, err := h.discord.GetForumTags(discord.ChannelID(channelID))
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"tags": tags,
 	}, nil
 }

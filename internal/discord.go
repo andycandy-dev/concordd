@@ -8,31 +8,50 @@ import (
 	"time"
 
 	"github.com/andycandy-dev/concordd/internal/http"
+	"github.com/diamondburned/arikawa/v3/api"
 	"github.com/diamondburned/arikawa/v3/discord"
 	"github.com/diamondburned/arikawa/v3/gateway"
 	"github.com/diamondburned/arikawa/v3/session"
 	"github.com/diamondburned/arikawa/v3/state"
 	"github.com/diamondburned/arikawa/v3/state/store/defaultstore"
 	"github.com/diamondburned/arikawa/v3/utils/handler"
+	"github.com/diamondburned/arikawa/v3/utils/httputil"
+	"github.com/diamondburned/arikawa/v3/utils/json/option"
 	"github.com/diamondburned/ningen/v3"
 	"github.com/diamondburned/ningen/v3/states/read"
 )
 
 // DiscordClient wraps the Discord state and provides IPC-friendly methods
 type DiscordClient struct {
-	state       *ningen.State
-	server      *Server
-	historySize int
-	connected   bool
-	mu          sync.RWMutex
+	state                      *ningen.State
+	server                     *Server
+	historySize                int
+	defaultAutoArchiveDuration int // minutes: 60, 1440, 4320, or 10080
+	connected                  bool
+	mu                         sync.RWMutex
 }
 
 // NewDiscordClient creates a new Discord client
-func NewDiscordClient(token string, server *Server, historySize int) (*DiscordClient, error) {
+func NewDiscordClient(token string, server *Server, historySize int, autoArchiveDuration int) (*DiscordClient, error) {
+	// Validate auto-archive duration and use default if invalid
+	validDurations := []int{60, 1440, 4320, 10080}
+	isValid := false
+	for _, valid := range validDurations {
+		if autoArchiveDuration == valid {
+			isValid = true
+			break
+		}
+	}
+	if !isValid {
+		autoArchiveDuration = 10080 // Default: 1 week
+		slog.Warn("Invalid auto-archive duration, using default 10080 (1 week)")
+	}
+
 	dc := &DiscordClient{
-		server:      server,
-		historySize: historySize,
-		connected:   false,
+		server:                     server,
+		historySize:                historySize,
+		defaultAutoArchiveDuration: autoArchiveDuration,
+		connected:                  false,
 	}
 
 	// Create Discord state
@@ -51,6 +70,9 @@ func NewDiscordClient(token string, server *Server, historySize int) (*DiscordCl
 	dc.state.AddHandler(dc.onReadUpdate)
 	dc.state.AddHandler(dc.onGuildCreate)
 	dc.state.AddHandler(dc.onChannelCreate)
+	dc.state.AddHandler(dc.onThreadCreate)
+	dc.state.AddHandler(dc.onThreadUpdate)
+	dc.state.AddHandler(dc.onThreadDelete)
 
 	return dc, nil
 }
@@ -395,6 +417,238 @@ func (dc *DiscordClient) GetGuildRoles(guildID discord.GuildID) ([]Role, error) 
 	return result, nil
 }
 
+// ListThreads lists threads in a channel
+func (dc *DiscordClient) ListThreads(channelID discord.ChannelID, archived bool) ([]Thread, error) {
+	if !dc.IsConnected() {
+		return nil, NewError(NotConnected, "Not connected to Discord")
+	}
+
+	// Get the channel to determine its guild
+	channel, err := dc.state.Cabinet.Channel(channelID)
+	if err != nil {
+		return nil, NewError(ChannelNotFound, fmt.Sprintf("Failed to get channel: %v", err))
+	}
+
+	var threads []discord.Channel
+
+	if archived {
+		// Get archived threads via API
+		archivedThreads, err := dc.state.PublicArchivedThreads(channelID, discord.Timestamp{}, 100)
+		if err != nil {
+			return nil, NewError(DiscordAPIError, fmt.Sprintf("Failed to get archived threads: %v", err))
+		}
+		threads = archivedThreads.Threads
+	} else {
+		// Get active threads from state cache (works for regular users, not just bots)
+		// This retrieves all channels in the guild, which includes active threads from GuildCreateEvent
+		allChannels, err := dc.state.Cabinet.Channels(channel.GuildID)
+		if err != nil {
+			return nil, NewError(DiscordAPIError, fmt.Sprintf("Failed to get channels: %v", err))
+		}
+
+		// Filter for threads that belong to this channel
+		for _, ch := range allChannels {
+			if ch.ParentID == channelID && 
+				(ch.Type == discord.GuildPublicThread ||
+				 ch.Type == discord.GuildPrivateThread ||
+				 ch.Type == discord.GuildAnnouncementThread) {
+				threads = append(threads, ch)
+			}
+		}
+	}
+
+	result := make([]Thread, len(threads))
+	for i, t := range threads {
+		// Check if user has joined the thread
+		isJoined := dc.state.ThreadState.ThreadIsJoined(t.ID)
+		result[i] = ToThread(t, isJoined)
+	}
+
+	return result, nil
+}
+
+// CreateThread creates a new thread
+func (dc *DiscordClient) CreateThread(channelID discord.ChannelID, messageID discord.MessageID, name string, autoArchiveDuration int) (*Thread, error) {
+	if !dc.IsConnected() {
+		return nil, NewError(NotConnected, "Not connected to Discord")
+	}
+
+	if name == "" {
+		return nil, NewError(InvalidParams, "Thread name cannot be empty")
+	}
+
+	// Set default auto archive duration if not provided
+	if autoArchiveDuration == 0 {
+		autoArchiveDuration = 60 // 60 minutes default
+	}
+
+	data := api.StartThreadData{
+		Name:                name,
+		AutoArchiveDuration: discord.ArchiveDuration(autoArchiveDuration),
+	}
+
+	var thread *discord.Channel
+	var err error
+
+	if messageID.IsValid() {
+		// Create thread from message
+		thread, err = dc.state.StartThreadWithMessage(channelID, messageID, data)
+	} else {
+		// Create standalone thread
+		thread, err = dc.state.StartThreadWithoutMessage(channelID, data)
+	}
+
+	if err != nil {
+		return nil, NewError(DiscordAPIError, fmt.Sprintf("Failed to create thread: %v", err))
+	}
+
+	// User is automatically joined when creating thread
+	isJoined := true
+	result := ToThread(*thread, isJoined)
+	return &result, nil
+}
+
+// CreateForumPost creates a forum post (thread with initial message)
+func (dc *DiscordClient) CreateForumPost(channelID discord.ChannelID, name string, content string, tags []string) (*Thread, *Message, error) {
+	if !dc.IsConnected() {
+		return nil, nil, NewError(NotConnected, "Not connected to Discord")
+	}
+
+	if name == "" {
+		return nil, nil, NewError(InvalidParams, "Post name cannot be empty")
+	}
+
+	if content == "" {
+		return nil, nil, NewError(InvalidParams, "Post content cannot be empty")
+	}
+
+	// Convert tag strings to TagIDs (if provided)
+	var appliedTags []discord.TagID
+	for _, tagStr := range tags {
+		tagID, err := discord.ParseSnowflake(tagStr)
+		if err != nil {
+			return nil, nil, NewError(InvalidParams, fmt.Sprintf("Invalid tag ID: %s", tagStr))
+		}
+		appliedTags = append(appliedTags, discord.TagID(tagID))
+	}
+
+	// For forum posts, we need to include the message in the thread creation request
+	type forumThreadData struct {
+		Name                string                   `json:"name"`
+		AutoArchiveDuration discord.ArchiveDuration  `json:"auto_archive_duration"`
+		AppliedTags         []discord.TagID          `json:"applied_tags,omitempty"`
+		Message             struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	}
+
+	data := forumThreadData{
+		Name:                name,
+		AutoArchiveDuration: discord.ArchiveDuration(dc.defaultAutoArchiveDuration),
+		AppliedTags:         appliedTags,
+	}
+	data.Message.Content = content
+
+	// Create forum post using the raw API
+	var thread *discord.Channel
+	err := dc.state.Client.RequestJSON(
+		&thread, "POST",
+		api.EndpointChannels+channelID.String()+"/threads",
+		httputil.WithJSONBody(data),
+	)
+	if err != nil {
+		return nil, nil, NewError(DiscordAPIError, fmt.Sprintf("Failed to create forum post: %v", err))
+	}
+
+	// Get the initial message from the thread
+	messages, err := dc.state.Messages(thread.ID, 1)
+	if err != nil || len(messages) == 0 {
+		return nil, nil, NewError(DiscordAPIError, fmt.Sprintf("Failed to get initial message: %v", err))
+	}
+	msg := messages[0]
+
+	// Get member info for roles
+	var roles []discord.RoleID
+	if thread.GuildID.IsValid() {
+		member, err := dc.state.Cabinet.Member(thread.GuildID, msg.Author.ID)
+		if err == nil {
+			roles = member.RoleIDs
+		}
+	}
+
+	threadResult := ToThread(*thread, true)
+	messageResult := ToMessage(msg, roles)
+	return &threadResult, &messageResult, nil
+}
+
+// JoinThread joins a thread
+func (dc *DiscordClient) JoinThread(threadID discord.ChannelID) error {
+	if !dc.IsConnected() {
+		return NewError(NotConnected, "Not connected to Discord")
+	}
+
+	if err := dc.state.JoinThread(threadID); err != nil {
+		return NewError(DiscordAPIError, fmt.Sprintf("Failed to join thread: %v", err))
+	}
+
+	return nil
+}
+
+// LeaveThread leaves a thread
+func (dc *DiscordClient) LeaveThread(threadID discord.ChannelID) error {
+	if !dc.IsConnected() {
+		return NewError(NotConnected, "Not connected to Discord")
+	}
+
+	if err := dc.state.LeaveThread(threadID); err != nil {
+		return NewError(DiscordAPIError, fmt.Sprintf("Failed to leave thread: %v", err))
+	}
+
+	return nil
+}
+
+// ArchiveThread archives a thread
+func (dc *DiscordClient) ArchiveThread(threadID discord.ChannelID) error {
+	if !dc.IsConnected() {
+		return NewError(NotConnected, "Not connected to Discord")
+	}
+
+	// Modify thread to set archived = true
+	data := api.ModifyChannelData{
+		Archived: option.True,
+	}
+
+	if err := dc.state.ModifyChannel(threadID, data); err != nil {
+		return NewError(DiscordAPIError, fmt.Sprintf("Failed to archive thread: %v", err))
+	}
+
+	return nil
+}
+
+// GetForumTags gets available tags for a forum channel
+func (dc *DiscordClient) GetForumTags(channelID discord.ChannelID) ([]Tag, error) {
+	if !dc.IsConnected() {
+		return nil, NewError(NotConnected, "Not connected to Discord")
+	}
+
+	channel, err := dc.state.Cabinet.Channel(channelID)
+	if err != nil {
+		return nil, NewError(ChannelNotFound, fmt.Sprintf("Failed to get channel: %v", err))
+	}
+
+	// Check if it's a forum channel
+	if channel.Type != discord.GuildForum {
+		return nil, NewError(InvalidParams, "Channel is not a forum channel")
+	}
+
+	result := make([]Tag, len(channel.AvailableTags))
+	for i, t := range channel.AvailableTags {
+		result[i] = ToTag(t)
+	}
+
+	return result, nil
+}
+
 // Event handlers
 
 func (dc *DiscordClient) onReady(r *gateway.ReadyEvent) {
@@ -517,5 +771,39 @@ func (dc *DiscordClient) notifyConnectionStatus(status string, reason string) {
 		JSONRPC: "2.0",
 		Method:  "connectionStatusChanged",
 		Params:  mustMarshal(params),
+	})
+}
+
+func (dc *DiscordClient) onThreadCreate(t *gateway.ThreadCreateEvent) {
+	isJoined := dc.state.ThreadState.ThreadIsJoined(t.ID)
+	thread := ToThread(t.Channel, isJoined)
+
+	dc.server.Broadcast(&Notification{
+		JSONRPC: "2.0",
+		Method:  "threadCreated",
+		Params:  mustMarshal(map[string]interface{}{"thread": thread}),
+	})
+}
+
+func (dc *DiscordClient) onThreadUpdate(t *gateway.ThreadUpdateEvent) {
+	isJoined := dc.state.ThreadState.ThreadIsJoined(t.ID)
+	thread := ToThread(t.Channel, isJoined)
+
+	dc.server.Broadcast(&Notification{
+		JSONRPC: "2.0",
+		Method:  "threadUpdated",
+		Params:  mustMarshal(map[string]interface{}{"thread": thread}),
+	})
+}
+
+func (dc *DiscordClient) onThreadDelete(t *gateway.ThreadDeleteEvent) {
+	dc.server.Broadcast(&Notification{
+		JSONRPC: "2.0",
+		Method:  "threadDeleted",
+		Params:  mustMarshal(map[string]interface{}{
+			"threadId": t.ID.String(),
+			"guildId":  t.GuildID.String(),
+			"parentId": t.ParentID.String(),
+		}),
 	})
 }

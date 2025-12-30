@@ -198,11 +198,43 @@ The v1.0 implementation is complete and functional. All core features are workin
 }
 #+end_src
 
+** Thread
+#+begin_src json
+{
+  "id": "123456789",
+  "guildId": "987654321",
+  "parentId": "555555555",
+  "name": "Thread Name",
+  "type": 11,
+  "messageCount": 42,
+  "memberCount": 5,
+  "archived": false,
+  "locked": false,
+  "invitable": true,
+  "autoArchiveDuration": 60,
+  "archiveTimestamp": "2025-12-27T12:00:00Z",
+  "createTimestamp": "2025-12-27T12:00:00Z",
+  "isJoined": true,
+  "appliedTags": ["tag_id_1"]
+}
+#+end_src
+
+** Tag
+#+begin_src json
+{
+  "id": "123456789",
+  "name": "Bug",
+  "moderated": false,
+  "emojiId": "987654321",
+  "emojiName": "🐛"
+}
+#+end_src
+
 * API Methods (v1.0)
 
 ** Client → Daemon (Request/Response)
 
-12 methods total: ping, listGuilds, listChannels, getMessages, sendMessage, replyToMessage, editMessage, deleteMessage, markAsRead, getReadState, getGuildMembers, getGuildRoles
+19 methods total: ping, listGuilds, listChannels, getMessages, sendMessage, replyToMessage, editMessage, deleteMessage, markAsRead, getReadState, getGuildMembers, getGuildRoles, listThreads, createThread, createForumPost, joinThread, leaveThread, archiveThread, getForumTags
 
 *** ~ping~
 Health check.
@@ -429,6 +461,8 @@ Get all roles in a guild.
 
 ** Daemon → Client (Push Notifications)
 
+10 event types total: messageCreated, messageUpdated, messageDeleted, readStateUpdated, connectionStatusChanged, guildCreated, channelCreated, threadCreated, threadUpdated, threadDeleted
+
 *** ~messageCreated~
 New message received.
 
@@ -504,6 +538,38 @@ New channel created in a guild.
 }
 #+end_src
 
+*** ~threadCreated~
+New thread created.
+
+*Params:*
+#+begin_src json
+{
+  "thread": Thread
+}
+#+end_src
+
+*** ~threadUpdated~
+Thread metadata updated (archived, locked, etc.).
+
+*Params:*
+#+begin_src json
+{
+  "thread": Thread
+}
+#+end_src
+
+*** ~threadDeleted~
+Thread was deleted.
+
+*Params:*
+#+begin_src json
+{
+  "threadId": "123456789",
+  "guildId": "987654321",
+  "parentId": "555555555"
+}
+#+end_src
+
 * Daemon Implementation
 
 ** Command-Line Interface
@@ -564,12 +630,12 @@ concordd start [OPTIONS]
 
 ** Statistics
 
-- *API Methods:* 12 (ping, listGuilds, listChannels, getMessages, sendMessage, replyToMessage, editMessage, deleteMessage, markAsRead, getReadState, getGuildMembers, getGuildRoles)
-- *Push Events:* 7 (messageCreated, messageUpdated, messageDeleted, readStateUpdated, connectionStatusChanged, guildCreated, channelCreated)
-- *Backend Code:* ~800 lines (Go)
+- *API Methods:* 19 (ping, listGuilds, listChannels, getMessages, sendMessage, replyToMessage, editMessage, deleteMessage, markAsRead, getReadState, getGuildMembers, getGuildRoles, listThreads, createThread, createForumPost, joinThread, leaveThread, archiveThread, getForumTags)
+- *Push Events:* 10 (messageCreated, messageUpdated, messageDeleted, readStateUpdated, connectionStatusChanged, guildCreated, channelCreated, threadCreated, threadUpdated, threadDeleted)
+- *Backend Code:* ~1000 lines (Go)
 - *Frontend Code:* ~750 lines (Emacs Lisp)
-- *Test Scripts:* 3 (test-ipc.sh, test-discord-ipc.sh, test-pagination.sh)
-- *Documentation:* Complete (ipc.org, README-discord-el.md, examples-discord-el.sh)
+- *Test Scripts:* 5 (test-ipc.sh, test-discord-ipc.sh, test-pagination.sh, test-threads.sh, test-forums.sh)
+- *Documentation:* Complete (ipc.org, README-discord-el.md, examples-discord-el.sh, THREAD_IMPLEMENTATION_PLAN.md)
 
 ** Components
 
@@ -708,17 +774,38 @@ history_size = 100
 * Future Enhancements (Post-MVP)
 
 ** Operations
+
+*** Thread Operations (Priority 1)
+- ~listThreads~ - List active/archived threads in a channel
+- ~createThread~ - Create thread from message or standalone
+- ~getThreadMessages~ - Get messages from a thread
+- ~sendThreadMessage~ - Send message to a thread
+- ~joinThread~ - Join a thread
+- ~leaveThread~ - Leave a thread
+- ~archiveThread~ - Archive a thread
+- ~unarchiveThread~ - Unarchive a thread
+
+*** Forum Operations (Priority 2)
+- ~listForumPosts~ - List posts in a forum channel
+- ~createForumPost~ - Create new forum post with title
+- ~getForumTags~ - Get available tags for a forum
+
+*** Other Operations
 - ~uploadFile~ - Send file attachments
 - ~addReaction~ - React with emoji
 - ~removeReaction~ - Remove reaction
-- ~deleteMessage~ - Delete own message
-- ~editMessage~ - Edit own message
-- ~getGuildMembers~ - List guild members
 - ~getUserPresence~ - Get user online status
 - ~searchMessages~ - Search message history
-- ~createThread~ - Create thread from message
 
 ** Notifications
+
+*** Thread Events
+- ~threadCreated~ - New thread created
+- ~threadUpdated~ - Thread archived/locked/renamed
+- ~threadDeleted~ - Thread deleted
+- ~threadMemberUpdate~ - User joined/left thread
+
+*** Other Events
 - ~typingStart~ - User started typing
 - ~presenceUpdate~ - User status changed
 - ~reactionAdded~ - Reaction added to message
@@ -857,26 +944,39 @@ socat - UNIX-CONNECT:/tmp/concordd.sock
 - [X] Evil mode compatibility
 - [X] Mention rendering in messages
 
-** Phase 5: Production Ready (IN PROGRESS)
-- [ ] Error handling improvements
-- [ ] Rate limiting respect
-- [ ] Reconnection logic (daemon auto-reconnect)
-- [ ] Performance monitoring
-- [ ] Better error messages in client
-- [ ] Handle daemon disconnection gracefully in client
+** Phase 5: Thread Support (IN PROGRESS)
+- [ ] ~listThreads~ method - List active/archived threads in a channel
+- [ ] ~createThread~ method - Create thread from message or standalone
+- [ ] ~getThreadMessages~ method - Get messages from a thread
+- [ ] ~sendThreadMessage~ method - Send message to a thread
+- [ ] ~joinThread~ method - Join a thread
+- [ ] ~leaveThread~ method - Leave a thread
+- [ ] Thread DTO with metadata (archived, locked, member count)
+- [ ] ~threadCreated~ event - New thread created
+- [ ] ~threadUpdated~ event - Thread archived/locked/renamed
+- [ ] Thread UI in Emacs client
+- [ ] Thread indicators in message view
 
-** Phase 6: Enhanced UI (NEXT)
-- [ ] Message pagination (load older messages)
+** Phase 6: Forum Channel Support (NEXT)
+- [ ] Forum channel type detection (GUILD_FORUM = 15)
+- [ ] ~listForumPosts~ method - List posts (threads) in forum
+- [ ] ~createForumPost~ method - Create new post with title + message
+- [ ] Forum post tags support
+- [ ] Forum post sorting (latest activity, creation date)
+- [ ] Forum-specific UI in Emacs client
+- [ ] Available tags display and filtering
+
+** Phase 7: Enhanced UI
 - [ ] Rich message rendering (embeds, code blocks, formatting)
+- [ ] Code block rendering with syntax highlighting
+- [ ] Markdown formatting (bold, italic, strikethrough)
 - [ ] Attachment display (images, files)
-- [ ] Reply to specific messages (thread view)
-- [ ] Edit/delete own messages
 - [ ] Emoji reactions display and add/remove
 - [ ] Channel history navigation (j/k keys)
 - [ ] Guild/channel switching without reopening buffers
 - [ ] Unread indicators in channel list
 
-** Phase 7: Advanced Features (FUTURE)
+** Phase 8: Advanced Features (FUTURE)
 - [ ] File attachments (~uploadFile~)
 - [ ] User @mention autocomplete when composing
 - [ ] Role @mention autocomplete
@@ -884,11 +984,16 @@ socat - UNIX-CONNECT:/tmp/concordd.sock
 - [ ] Typing indicators
 - [ ] User presence display
 - [ ] Direct messages
-- [ ] Thread support
 - [ ] Voice channel awareness (show who's in voice)
 - [ ] Message search
 - [ ] Pin messages view
 - [ ] Notification preferences per-channel
+- [ ] Error handling improvements
+- [ ] Rate limiting respect
+- [ ] Reconnection logic (daemon auto-reconnect)
+- [ ] Performance monitoring
+- [ ] Better error messages in client
+- [ ] Handle daemon disconnection gracefully in client
 
 * Performance Characteristics
 
@@ -936,23 +1041,23 @@ The daemon implements intelligent message caching:
 
 ** Recommended Next Steps
 
-*** Priority 1: Stability & UX
-1. ✅ **Message pagination** - Load more messages (before/after) - DONE
-2. ✅ **Edit/delete messages** - Basic CRUD for own messages - DONE
-3. **Error handling** - Better error messages in Emacs client
-4. **Reconnection logic** - Auto-reconnect daemon if gateway drops
-
-*** Priority 2: Rich Content
+*** Priority 1: Rich Content (CURRENT)
 1. **Code block rendering** - Syntax highlighting for ```code```
 2. **Embed display** - Show embeds in readable format
 3. **Image attachments** - Display inline or as clickable links
 4. **Markdown formatting** - Bold, italic, strikethrough
 
+*** Priority 2: Emacs Thread UI (NEXT)
+1. **Thread list buffer** - Browse threads in channels
+2. **Thread keybindings** - Create, join, leave threads from UI
+3. **Forum browser** - Dedicated UI for forum channels
+4. **Thread indicators** - Show thread count/activity in channel list
+
 *** Priority 3: Productivity
 1. **@mention autocomplete** - Tab-complete users/roles when composing
 2. **Channel navigation** - Switch channels without reopening buffers
 3. **Message search** - Search within channel or guild
-4. **Thread support** - View and reply to threads
+4. **Error handling** - Better error messages and reconnection logic
 
 *** Priority 4: Advanced
 1. **File upload** - Send attachments from Emacs
@@ -971,13 +1076,16 @@ The daemon implements intelligent message caching:
 
 * Summary
 
-** What's Complete (v1.0)
+** What's Complete (v1.1)
 
 *** Backend
 - ✅ Full JSON-RPC 2.0 server over Unix socket
-- ✅ 12 API methods (complete CRUD functionality)
-- ✅ 7 push event types (real-time updates)
+- ✅ 19 API methods (complete CRUD functionality + threads/forums)
+- ✅ 10 push event types (real-time updates including threads)
 - ✅ Guild member and role metadata
+- ✅ Thread support (list, create, join/leave, archive)
+- ✅ Forum channel support (create posts, get tags)
+- ✅ Thread state tracking (joined/not joined)
 - ✅ Message caching with configurable size
 - ✅ Graceful shutdown and signal handling
 
@@ -991,25 +1099,29 @@ The daemon implements intelligent message caching:
 - ✅ Edit/delete own messages (e, dd keybindings)
 - ✅ Event handling system
 - ✅ Full documentation and examples
+- ⏳ Thread UI (pending)
+- ⏳ Forum UI (pending)
 
 *** Testing
-- ✅ Manual test scripts (test-ipc.sh, test-discord-ipc.sh, test-pagination.sh)
+- ✅ Manual test scripts (test-ipc.sh, test-discord-ipc.sh, test-pagination.sh, test-threads.sh, test-forums.sh)
 - ✅ Verified all methods working
 - ✅ Verified push notifications working
 - ✅ Evil mode tested and working
 - ✅ Pagination tested and working
 - ✅ Edit/delete tested and working
+- ⏳ Thread operations (pending real Discord testing)
+- ⏳ Forum operations (pending real Discord testing)
 
 ** What's Next
 
-*Immediate Priority:* Code block rendering + Markdown formatting
+*Immediate Priority:* Rich content rendering + Thread UI
 
 *Top 3 Features Needed:*
 1. Code block rendering - Syntax highlighting for developer conversations
-2. Markdown formatting - Bold, italic, strikethrough for readability
-3. Embed display - Rich content support
+2. Thread UI in Emacs - Browse and interact with threads
+3. Forum UI in Emacs - Browse forum posts and create new posts
 
-*Current Status:* Fully functional Discord client with complete CRUD operations. Ready for daily developer use.
+*Current Status:* Fully functional Discord client with complete CRUD operations and thread/forum support. Thread backend complete, UI pending.
 
 * References
 - JSON-RPC 2.0 Specification: https://www.jsonrpc.org/specification

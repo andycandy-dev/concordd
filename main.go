@@ -14,12 +14,13 @@ import (
 )
 
 var (
-	socketPath  string
-	token       string
-	logPath     string
-	logLevel    string
-	historySize int
-	configPath  string
+	socketPath          string
+	token               string
+	logPath             string
+	logLevel            string
+	historySize         int
+	autoArchiveDuration int
+	configPath          string
 )
 
 var rootCmd = &cobra.Command{
@@ -114,6 +115,7 @@ var startCmd = &cobra.Command{
 		slog.Info("Starting concordd",
 			"socket", socketPath,
 			"history_size", historySize,
+			"auto_archive_duration", autoArchiveDuration,
 			"log_level", logLevel,
 		)
 
@@ -141,7 +143,7 @@ var startCmd = &cobra.Command{
 		defer server.Stop()
 
 		// Create and connect Discord client
-		discord, err := internal.NewDiscordClient(token, server, historySize)
+		discord, err := internal.NewDiscordClient(token, server, historySize, autoArchiveDuration)
 		if err != nil {
 			return fmt.Errorf("failed to create Discord client: %w", err)
 		}
@@ -176,6 +178,7 @@ func init() {
 	startCmd.Flags().StringVar(&socketPath, "socket-path", "/tmp/concordd.sock", "Unix socket path")
 	startCmd.Flags().StringVar(&token, "token", "", "Discord token (default: $DISCORDO_TOKEN or keyring)")
 	startCmd.Flags().IntVar(&historySize, "history-size", 100, "message cache size per channel")
+	startCmd.Flags().IntVar(&autoArchiveDuration, "auto-archive-duration", 10080, "default thread auto-archive duration in minutes (60, 1440, 4320, or 10080)")
 	startCmd.Flags().StringVar(&configPath, "config", "", "config file path")
 
 	// Login command flags
