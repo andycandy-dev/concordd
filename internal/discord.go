@@ -73,6 +73,7 @@ func NewDiscordClient(token string, server *Server, historySize int, autoArchive
 	dc.state.AddHandler(dc.onThreadCreate)
 	dc.state.AddHandler(dc.onThreadUpdate)
 	dc.state.AddHandler(dc.onThreadDelete)
+	dc.state.AddHandler(dc.onGuildMembersChunk)
 
 	return dc, nil
 }
@@ -396,6 +397,30 @@ func (dc *DiscordClient) GetGuildMembers(guildID discord.GuildID) ([]Member, err
 	}
 
 	return result, nil
+}
+
+// RequestGuildMembers requests specific guild members via gateway
+// This populates the Cabinet cache with the requested members
+func (dc *DiscordClient) RequestGuildMembers(guildID discord.GuildID, userIDs []discord.UserID) error {
+	if !dc.IsConnected() {
+		return NewError(NotConnected, "Not connected to Discord")
+	}
+
+	if len(userIDs) == 0 {
+		return nil
+	}
+
+	// Send gateway command to request members
+	err := dc.state.Gateway().Send(context.Background(), &gateway.RequestGuildMembersCommand{
+		GuildIDs: []discord.GuildID{guildID},
+		UserIDs:  userIDs,
+	})
+	if err != nil {
+		return NewError(DiscordAPIError, fmt.Sprintf("Failed to request guild members: %v", err))
+	}
+
+	slog.Debug("Requested guild members", "guild_id", guildID, "user_count", len(userIDs))
+	return nil
 }
 
 // GetGuildRoles returns all roles in a guild
@@ -794,6 +819,23 @@ func (dc *DiscordClient) onThreadDelete(t *gateway.ThreadDeleteEvent) {
 			"threadId": t.ID.String(),
 			"guildId":  t.GuildID.String(),
 			"parentId": t.ParentID.String(),
+		}),
+	})
+}
+
+func (dc *DiscordClient) onGuildMembersChunk(g *gateway.GuildMembersChunkEvent) {
+	// Convert members to IPC format
+	members := make([]Member, len(g.Members))
+	for i, m := range g.Members {
+		members[i] = ToMember(m, m.User)
+	}
+
+	dc.server.Broadcast(&Notification{
+		JSONRPC: "2.0",
+		Method:  "guildMembersChunk",
+		Params: mustMarshal(map[string]interface{}{
+			"guildId": g.GuildID.String(),
+			"members": members,
 		}),
 	})
 }

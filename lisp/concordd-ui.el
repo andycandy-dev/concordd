@@ -10,6 +10,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'concordd)
 
 ;;; Variables
 
@@ -177,6 +178,31 @@
      (lambda (result)
        (puthash guild-id (plist-get result :roles) concordd-ui-guild-roles)))))
 
+(defun concordd-ui-request-missing-members (guild-id messages)
+  "Request missing guild members for MESSAGES authors from GUILD-ID."
+  (let ((cached-members (gethash guild-id concordd-ui-guild-members))
+        (missing-user-ids nil))
+    
+    ;; Find which message authors are not in cache
+    (dolist (msg messages)
+      (let* ((author (plist-get msg :author))
+             (author-id (plist-get author :id)))
+        (unless (cl-find-if
+                 (lambda (m)
+                   (string= (plist-get (plist-get m :user) :id) author-id))
+                 cached-members)
+          (push author-id missing-user-ids))))
+    
+    ;; Request them if any are missing
+    (when missing-user-ids
+      (concordd-request-guild-members
+       guild-id
+       (cl-remove-duplicates missing-user-ids :test #'string=)
+       (lambda (_result)
+         ;; Members will arrive via GuildMembersChunk events
+         ;; and be added to cache automatically by the state
+         nil)))))
+
 (defun concordd-ui-load-more-messages ()
   "Load older messages in current channel."
   (interactive)
@@ -206,6 +232,21 @@
    50
    concordd-ui-oldest-message-id))
 
+(defun concordd-ui-refresh-current-channel ()
+  "Refresh the current channel buffer with updated member data.
+Re-renders all messages to resolve any pending mentions."
+  (interactive)
+  (when (and (eq major-mode 'concordd-ui-channel-mode)
+             concordd-ui-channel-id)
+    (let ((channel-id concordd-ui-channel-id))
+      (concordd-get-messages
+       channel-id
+       (lambda (result)
+         (let ((messages (reverse (plist-get result :messages))))
+           (concordd-ui-display-messages channel-id messages t)))
+       50
+       nil))))
+
 (defun concordd-ui-display-messages (channel-id messages &optional keep-position)
   "Display MESSAGES for CHANNEL-ID in current buffer.
 If KEEP-POSITION is non-nil, try to maintain cursor position."
@@ -217,6 +258,10 @@ If KEEP-POSITION is non-nil, try to maintain cursor position."
               (buffer-list))))
     (when buf
       (with-current-buffer buf
+        ;; Request missing guild members before displaying
+        (when concordd-ui-channel-guild-id
+          (concordd-ui-request-missing-members concordd-ui-channel-guild-id messages))
+        
         (let ((inhibit-read-only t)
               (old-point (when keep-position (point))))
           (erase-buffer)
@@ -354,6 +399,33 @@ If KEEP-POSITION is non-nil, try to maintain cursor position."
                 (goto-char (point-max))
                 (insert "\n")
                 (concordd-ui-insert-message msg)))))))))
+
+(defun concordd-ui-handle-guild-members-chunk (params)
+  "Handle guildMembersChunk event with PARAMS.
+Updates member cache and re-renders open channel buffers."
+  (let* ((guild-id (plist-get params :guildId))
+         (new-members (plist-get params :members))
+         (existing-members (gethash guild-id concordd-ui-guild-members)))
+    
+    ;; Merge new members into cache
+    (dolist (member new-members)
+      (let ((user-id (plist-get (plist-get member :user) :id)))
+        (unless (cl-find-if
+                (lambda (m)
+                  (string= (plist-get (plist-get m :user) :id) user-id))
+                existing-members)
+          (push member existing-members))))
+    
+    (puthash guild-id existing-members concordd-ui-guild-members)
+    
+    ;; Re-render any open channel buffers for this guild
+    (dolist (buf (buffer-list))
+      (with-current-buffer buf
+        (when (and (eq major-mode 'concordd-ui-channel-mode)
+                   (boundp 'concordd-ui-channel-guild-id)
+                   (string= concordd-ui-channel-guild-id guild-id))
+          ;; Re-render the channel buffer
+          (concordd-ui-refresh-current-channel))))))
 
 ;;; Forum channel handling
 
@@ -533,8 +605,9 @@ Standard bindings:
   (when (and (boundp 'evil-mode) evil-mode)
     (evil-set-initial-state 'concordd-ui-channel-mode 'normal))
   
-  ;; Register event handler for new messages
-  (concordd-on 'messageCreated #'concordd-ui-handle-message-created))
+  ;; Register event handlers
+  (concordd-on 'messageCreated #'concordd-ui-handle-message-created)
+  (concordd-on 'guildMembersChunk #'concordd-ui-handle-guild-members-chunk))
 
 (defun concordd-ui-compose-message ()
   "Open a compose buffer to send a message to current channel."

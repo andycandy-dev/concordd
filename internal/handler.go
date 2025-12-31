@@ -45,6 +45,7 @@ func (h *Handler) SetDiscordClient(dc *DiscordClient) {
 	h.RegisterMethod("getReadState", h.handleGetReadState)
 	h.RegisterMethod("getGuildMembers", h.handleGetGuildMembers)
 	h.RegisterMethod("getGuildRoles", h.handleGetGuildRoles)
+	h.RegisterMethod("requestGuildMembers", h.handleRequestGuildMembers)
 	
 	// Thread methods
 	h.RegisterMethod("listThreads", h.handleListThreads)
@@ -374,6 +375,41 @@ func (h *Handler) handleGetGuildRoles(params json.RawMessage) (interface{}, erro
 
 	return map[string]interface{}{
 		"roles": roles,
+	}, nil
+}
+
+// handleRequestGuildMembers handles the requestGuildMembers method
+func (h *Handler) handleRequestGuildMembers(params json.RawMessage) (interface{}, error) {
+	var req struct {
+		GuildID string   `json:"guildId"`
+		UserIDs []string `json:"userIds"`
+	}
+
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, NewError(InvalidParams, "Invalid parameters")
+	}
+
+	guildID, err := discord.ParseSnowflake(req.GuildID)
+	if err != nil {
+		return nil, NewError(InvalidParams, "Invalid guild ID")
+	}
+
+	userIDs := make([]discord.UserID, len(req.UserIDs))
+	for i, id := range req.UserIDs {
+		userID, err := discord.ParseSnowflake(id)
+		if err != nil {
+			return nil, NewError(InvalidParams, fmt.Sprintf("Invalid user ID: %s", id))
+		}
+		userIDs[i] = discord.UserID(userID)
+	}
+
+	err = h.discord.RequestGuildMembers(discord.GuildID(guildID), userIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"status": "ok",
 	}, nil
 }
 

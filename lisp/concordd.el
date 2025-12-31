@@ -188,6 +188,14 @@ CALLBACK is called with a list of role objects."
    `(:guildId ,guild-id)
    callback))
 
+(defun concordd-request-guild-members (guild-id user-ids callback)
+  "Request guild members for GUILD-ID and USER-IDS via gateway.
+CALLBACK is called when the request is sent (not when members arrive)."
+  (concordd-ipc-send-request
+   "requestGuildMembers"
+   `(:guildId ,guild-id :userIds ,(vconcat user-ids))
+   callback))
+
 (defun concordd-edit-message (channel-id message-id content callback)
   "Edit MESSAGE-ID in CHANNEL-ID with new CONTENT.
 CALLBACK is called with the edited message object."
