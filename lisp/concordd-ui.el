@@ -10,7 +10,21 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'concordd)
+;; Declare functions from concordd.el to avoid circular dependency
+(declare-function concordd-list-guilds "concordd")
+(declare-function concordd-list-channels "concordd")
+(declare-function concordd-get-messages "concordd")
+(declare-function concordd-send-message "concordd")
+(declare-function concordd-reply-to-message "concordd")
+(declare-function concordd-edit-message "concordd")
+(declare-function concordd-delete-message "concordd")
+(declare-function concordd-mark-as-read "concordd")
+(declare-function concordd-get-guild-members "concordd")
+(declare-function concordd-get-guild-roles "concordd")
+(declare-function concordd-request-guild-members "concordd")
+(declare-function concordd-list-threads "concordd")
+(declare-function concordd-create-thread "concordd")
+(declare-function concordd-create-forum-post "concordd")
 
 ;;; Variables
 

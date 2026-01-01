@@ -23,7 +23,17 @@
 (require 'ewoc)
 (require 'concordd-message)
 (require 'concordd-ewoc)
-(require 'concordd-ipc)
+;; Declare functions to avoid circular dependencies
+(declare-function concordd-ipc-on "concordd-ipc")
+(declare-function concordd-get-messages "concordd")
+(declare-function concordd-send-message "concordd")
+(declare-function concordd-list-guilds "concordd")
+(declare-function concordd-list-channels "concordd")
+(declare-function concordd-get-guild-members "concordd")
+(declare-function concordd-get-guild-roles "concordd")
+
+;; Load format module when available
+(require 'concordd-format nil t)
 
 ;;; Customization
 
@@ -92,6 +102,9 @@ Uses EWOC for efficient message display and incremental updates.
   (let ((buf (concordd-ui-v2--get-or-create-channel-buffer 
               channel-id channel-name guild-id)))
     (pop-to-buffer buf)
+    ;; Load guild cache for mention resolution
+    (when guild-id
+      (concordd-ui-v2--load-guild-cache guild-id))
     (concordd-ui-v2--load-messages channel-id)))
 
 (defun concordd-ui-v2--get-or-create-channel-buffer (channel-id channel-name guild-id)
@@ -125,6 +138,30 @@ Uses EWOC for efficient message display and incremental updates.
 
 ;;; Message loading
 
+(defun concordd-ui-v2--load-guild-cache (guild-id)
+  "Load members, roles, and channels for GUILD-ID into format cache."
+  (when (featurep 'concordd-format)
+    ;; Load members
+    (concordd-get-guild-members
+     guild-id
+     (lambda (result)
+       (let ((members (plist-get result :members)))
+         (concordd-format-set-guild-cache guild-id members nil nil))))
+    
+    ;; Load roles
+    (concordd-get-guild-roles
+     guild-id
+     (lambda (result)
+       (let ((roles (plist-get result :roles)))
+         (concordd-format-set-guild-cache guild-id nil roles nil))))
+    
+    ;; Load channels
+    (concordd-list-channels
+     guild-id
+     (lambda (result)
+       (let ((channels (plist-get result :channels)))
+         (concordd-format-set-guild-cache guild-id nil nil channels))))))
+
 (defun concordd-ui-v2--load-messages (channel-id)
   "Load initial messages for CHANNEL-ID."
   (concordd-get-messages
@@ -142,6 +179,9 @@ Uses EWOC for efficient message display and incremental updates.
         ;; Messages come in reverse chronological order, so reverse them
         (dolist (msg-plist (reverse messages))
           (let ((msg (concordd-message-from-plist msg-plist)))
+            ;; Store guild-id in message state for formatting
+            (setf (concordd-message-state msg)
+                  (plist-put (concordd-message-state msg) :guild-id concordd-ui-v2-guild-id))
             (ewoc-enter-last concordd-message-ewoc msg)
             ;; Track oldest message for pagination
             (when (or (null concordd-ui-v2-oldest-message-id)
@@ -177,6 +217,9 @@ Uses EWOC for efficient message display and incremental updates.
     ;; Messages come in reverse chronological order, process from end
     (dolist (msg-plist (reverse messages))
       (let ((msg (concordd-message-from-plist msg-plist)))
+        ;; Store guild-id in message state
+        (setf (concordd-message-state msg)
+              (plist-put (concordd-message-state msg) :guild-id concordd-ui-v2-guild-id))
         (ewoc-enter-first concordd-message-ewoc msg)
         ;; Update oldest message ID
         (when (or (null concordd-ui-v2-oldest-message-id)
@@ -196,6 +239,9 @@ Uses EWOC for efficient message display and incremental updates.
         (let ((inhibit-read-only t)
               (msg (concordd-message-from-plist msg-plist))
               (at-bottom (= (point) (point-max))))
+          ;; Store guild-id in message state
+          (setf (concordd-message-state msg)
+                (plist-put (concordd-message-state msg) :guild-id concordd-ui-v2-guild-id))
           (ewoc-enter-last concordd-message-ewoc msg)
           ;; Auto-scroll if we were at bottom
           (when at-bottom
@@ -323,11 +369,17 @@ This is a placeholder - full implementation in Phase 3."
         (dolist (channel channels)
           (let* ((channel-id (plist-get channel :id))
                  (channel-name (plist-get channel :name))
-                 (channel-type (plist-get channel :type)))
-            ;; Only show text channels for now
-            (when (= channel-type 0)
+                 (channel-type (plist-get channel :type))
+                 (icon (cond
+                        ((= channel-type 0) "#")    ; Text
+                        ((= channel-type 2) "🔊")   ; Voice
+                        ((= channel-type 5) "📢")   ; Announcement
+                        ((= channel-type 15) "💬")  ; Forum
+                        (t nil))))
+            ;; Show text, voice, announcement, and forum channels
+            (when icon
               (insert "  ")
-              (insert-button (format "#%s" channel-name)
+              (insert-button (format "%s%s" icon channel-name)
                             'action (lambda (_)
                                      (concordd-ui-v2-open-channel 
                                       channel-id channel-name guild-id))

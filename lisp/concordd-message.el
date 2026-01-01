@@ -3,17 +3,22 @@
 ;; Copyright (C) 2025 Concordd Project
 ;; Author: Andrej Novikov
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "28.1"))
+;; Package-Requires: ((emacs "28.1") (markdown-mode "2.5"))
 ;; Keywords: comm, discord
 
 ;;; Commentary:
 
 ;; This file defines the message data structures and rendering functions
 ;; for the Concordd EWOC-based UI.
+;; Uses markdown-view-mode for content rendering.
 
 ;;; Code:
 
 (require 'cl-lib)
+;; concordd-format is loaded on-demand for formatting
+(declare-function concordd-format-preprocess-mentions "concordd-format")
+(declare-function concordd-format-postprocess-mentions "concordd-format")
+(require 'markdown-mode nil t)
 
 ;;; Data Structures
 
@@ -86,29 +91,46 @@ This is called by ewoc whenever a message node needs to be rendered."
              (username (concordd-message--format-author author))
              (content (concordd-message-content message))
              (timestamp (concordd-message-timestamp message))
-             (edited (concordd-message-edited-timestamp message)))
+             (edited (concordd-message-edited-timestamp message))
+             (guild-id (plist-get (concordd-message-state message) :guild-id))
+             (start-pos (point)))
         
-        ;; Insert timestamp
+        ;; Insert timestamp and author header
         (insert (propertize (concordd-message--format-timestamp timestamp)
                            'face 'shadow))
         (insert " ")
-        
-        ;; Insert author
         (insert (propertize username
                            'face '(:weight bold :foreground "#5865F2")))
-        
-        ;; Insert edited indicator
         (when edited
           (insert (propertize " (edited)" 'face 'italic)))
-        
-        (insert ": ")
-        
-        ;; Insert content
-        (insert content)
         (insert "\n")
         
-        ;; Store message ID as text property for lookup
-        (put-text-property (line-beginning-position 0) (point)
+        ;; Insert message content
+        (when (and content (> (length content) 0))
+          (let ((content-start (point)))
+            ;; Pre-process mentions if concordd-format is loaded
+            (let ((processed-content 
+                   (if (fboundp 'concordd-format-preprocess-mentions)
+                       (concordd-format-preprocess-mentions content guild-id)
+                     content)))
+              ;; Insert content in a temporary markdown-view-mode buffer to get formatting
+              (if (featurep 'markdown-mode)
+                  (let ((formatted (concordd-message--render-markdown processed-content)))
+                    (insert formatted))
+                ;; Fallback: just insert plain text
+                (insert processed-content)))
+            
+            ;; Post-process: add mention faces if concordd-format is loaded
+            (when (fboundp 'concordd-format-postprocess-mentions)
+              (save-excursion
+                (save-restriction
+                  (narrow-to-region content-start (point))
+                  (concordd-format-postprocess-mentions guild-id))))))
+        
+        (insert "\n")
+        
+        ;; Store message ID as text property for the whole message
+        (put-text-property start-pos (point)
                           'concordd-message-id (concordd-message-id message)))
     
     (error
@@ -118,6 +140,15 @@ This is called by ewoc whenever a message node needs to be rendered."
                       (error-message-string err)
                       message)
               'face 'error)))))
+
+(defun concordd-message--render-markdown (content)
+  "Render CONTENT using markdown-view-mode.
+Returns the formatted content as a string with text properties."
+  (with-temp-buffer
+    (insert content)
+    (markdown-view-mode)
+    (font-lock-ensure)
+    (buffer-string)))
 
 (provide 'concordd-message)
 ;;; concordd-message.el ends here
