@@ -19,8 +19,15 @@
 ;; - Real-time push notifications
 ;; - Mark channels as read
 ;;
+;; UI v2 Features:
+;; - EWOC-based message display with incremental updates
+;; - Full markdown rendering via markdown-view-mode
+;; - Discord mention resolution
+;; - Consult-based navigation (optional, requires consult package)
+;;
 ;; Usage:
 ;;   (require 'concordd)
+;;   (setq concordd-ui-implementation 'v2)  ; Use new UI
 ;;   (concordd-connect)
 ;;   (concordd-browse)
 
@@ -299,9 +306,12 @@ CALLBACK is called with result containing :tags list."
       (lambda (result)
         (concordd-ui-show-guild-list (plist-get result :guilds)))))
     ('v2
-     ;; Use new EWOC-based UI
-     (require 'concordd-ui-v2)
-     (concordd-ui-v2-browser))
+     ;; Use consult-based navigation if available
+     (if (require 'concordd-consult nil t)
+         (consult-concordd-browse)
+       ;; Fallback to simple browser
+       (require 'concordd-ui-v2)
+       (concordd-ui-v2-browser)))
     (_
      (user-error "Invalid concordd-ui-implementation: %s" concordd-ui-implementation))))
 

@@ -98,14 +98,21 @@ CALLBACK is called with the result on success, or nil on error."
   "Process filter for incoming data from daemon.
 PROC is the network process.
 STRING is the incoming data."
-  (setq concordd-ipc--buffer (concat concordd-ipc--buffer string))
-  
-  ;; Process complete lines (messages end with \n)
-  (while (string-match "\n" concordd-ipc--buffer)
-    (let* ((line-end (match-beginning 0))
-           (line (substring concordd-ipc--buffer 0 line-end)))
-      (setq concordd-ipc--buffer (substring concordd-ipc--buffer (1+ line-end)))
-      (concordd-ipc--handle-message line))))
+  (condition-case err
+      (progn
+        (setq concordd-ipc--buffer (concat concordd-ipc--buffer string))
+        
+        ;; Process complete lines (messages end with \n)
+        (while (string-match "\n" concordd-ipc--buffer)
+          (let* ((line-end (match-beginning 0))
+                 (line (substring concordd-ipc--buffer 0 line-end)))
+            (setq concordd-ipc--buffer (substring concordd-ipc--buffer (1+ line-end)))
+            (concordd-ipc--handle-message line))))
+    (quit
+     ;; User quit, don't show error message
+     nil)
+    (error
+     (message "Error in concordd IPC filter: %s" err))))
 
 (defun concordd-ipc--handle-message (line)
   "Handle a complete JSON-RPC message from the daemon.
@@ -120,6 +127,9 @@ LINE is the JSON string."
             (concordd-ipc--handle-response msg)
           ;; Notification
           (concordd-ipc--handle-notification msg)))
+    (quit
+     ;; User quit, don't show error message
+     nil)
     (error
      (message "Error parsing JSON-RPC message: %s" err))))
 
@@ -135,7 +145,13 @@ MSG is the parsed response plist."
           (let ((error-obj (plist-get msg :error)))
             (message "Concordd RPC error: %s" (plist-get error-obj :message))
             (funcall callback nil))
-        (funcall callback (plist-get msg :result))))))
+        (condition-case err
+            (funcall callback (plist-get msg :result))
+          (quit
+           ;; User quit during callback, don't propagate
+           nil)
+          (error
+           (message "Error in RPC callback: %s" err)))))))
 
 (defun concordd-ipc--handle-notification (msg)
   "Handle a JSON-RPC notification (push event).
@@ -150,6 +166,9 @@ MSG is the parsed notification plist."
     (dolist (handler handlers)
       (condition-case err
           (funcall handler params)
+        (quit
+         ;; User quit during handler, don't propagate
+         nil)
         (error
          (message "Error in event handler for %s: %s" method err))))))
 
