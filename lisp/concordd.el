@@ -36,6 +36,14 @@
   :group 'comm
   :prefix "concordd-")
 
+(defcustom concordd-ui-implementation 'v2
+  "Which UI implementation to use.
+v1 - Original UI with full buffer regeneration
+v2 - New EWOC-based UI with incremental updates (recommended)"
+  :type '(choice (const :tag "Original (v1)" v1)
+                 (const :tag "EWOC-based (v2)" v2))
+  :group 'concordd)
+
 (defcustom concordd-socket-path "/tmp/concordd.sock"
   "Path to the concordd daemon Unix socket."
   :type 'string
@@ -284,10 +292,18 @@ CALLBACK is called with result containing :tags list."
   (unless (concordd-connected-p)
     (concordd-connect))
   
-  ;; Fetch guilds
-  (concordd-list-guilds
-   (lambda (result)
-     (concordd-ui-show-guild-list (plist-get result :guilds)))))
+  (pcase concordd-ui-implementation
+    ('v1
+     ;; Use original UI
+     (concordd-list-guilds
+      (lambda (result)
+        (concordd-ui-show-guild-list (plist-get result :guilds)))))
+    ('v2
+     ;; Use new EWOC-based UI
+     (require 'concordd-ui-v2)
+     (concordd-ui-v2-browser))
+    (_
+     (user-error "Invalid concordd-ui-implementation: %s" concordd-ui-implementation))))
 
 (provide 'concordd)
 
