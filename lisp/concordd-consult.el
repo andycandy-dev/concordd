@@ -100,7 +100,6 @@
   "Annotate channel candidate CAND with properties."
   (when-let ((data (cdr (assoc cand concordd-consult--channels-cache-alist))))
     (let* ((type (plist-get data :type))
-           (channel-id (plist-get data :id))
            (parent-id (plist-get data :parent-id))
            (parent-name (plist-get data :parent-name))
            (mention-count (plist-get data :mention-count))
@@ -125,13 +124,10 @@
       (when (and mentioned (> mention-count 0))
         (push (propertize (format "@%d" mention-count) 'face 'font-lock-warning-face)
               parts))
-      ;; Add ID (last 8 chars)
-      (push (propertize (format "ID:%s" (substring channel-id -8))
-                        'face 'font-lock-doc-face)
-            parts)
-      (concat
-       (propertize " " 'display '(space :align-to 50))
-       (string-join (nreverse parts) " ")))))
+      (when parts
+        (concat
+         (propertize " " 'display '(space :align-to 50))
+         (string-join (nreverse parts) " "))))))
 
 (defun concordd-consult--channel-type-icon (type)
   "Get icon for channel TYPE."
