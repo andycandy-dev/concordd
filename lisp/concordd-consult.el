@@ -101,7 +101,6 @@
   (when-let ((data (cdr (assoc cand concordd-consult--channels-cache-alist))))
     (let* ((type (plist-get data :type))
            (channel-id (plist-get data :id))
-           (position (plist-get data :position))
            (parent-id (plist-get data :parent-id))
            (mention-count (plist-get data :mention-count))
            (mentioned (plist-get data :mentioned))
@@ -116,10 +115,6 @@
                (_ (format "type:%d" type)))
              'face 'font-lock-type-face)
             parts)
-      ;; Add position if available
-      (when (and position (> position 0))
-        (push (propertize (format "pos:%d" position) 'face 'font-lock-comment-face)
-              parts))
       ;; Add nested indicator
       (when (and parent-id (not (string-empty-p parent-id)))
         (push (propertize "nested" 'face 'font-lock-keyword-face)
