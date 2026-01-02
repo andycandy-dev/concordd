@@ -102,6 +102,7 @@
     (let* ((type (plist-get data :type))
            (channel-id (plist-get data :id))
            (parent-id (plist-get data :parent-id))
+           (parent-name (plist-get data :parent-name))
            (mention-count (plist-get data :mention-count))
            (mentioned (plist-get data :mentioned))
            (parts '()))
@@ -115,9 +116,10 @@
                (_ (format "type:%d" type)))
              'face 'font-lock-type-face)
             parts)
-      ;; Add nested indicator
+      ;; Add parent/category name if nested
       (when (and parent-id (not (string-empty-p parent-id)))
-        (push (propertize "nested" 'face 'font-lock-keyword-face)
+        (push (propertize (format "in:%s" (or parent-name "?"))
+                          'face 'font-lock-keyword-face)
               parts))
       ;; Add mention count
       (when (and mentioned (> mention-count 0))
@@ -143,13 +145,21 @@
 
 (defun concordd-consult--channel-candidates (channels)
   "Return list of channel candidates from CHANNELS for consult."
-  (let (result)
+  (let (result
+        (parent-map (make-hash-table :test 'equal)))
+    ;; First pass: build parent ID -> name map
+    (dolist (channel channels)
+      (let ((id (plist-get channel :id))
+            (name (plist-get channel :name)))
+        (puthash id name parent-map)))
+    ;; Second pass: build candidates
     (dolist (channel channels)
       (let* ((name (plist-get channel :name))
              (id (plist-get channel :id))
              (type (plist-get channel :type))
              (position (plist-get channel :position))
              (parent-id (plist-get channel :parentId))
+             (parent-name (when parent-id (gethash parent-id parent-map)))
              (icon (concordd-consult--channel-type-icon type))
              (unread (eq (plist-get channel :unread) t))
              (mentioned (eq (plist-get channel :mentioned) t))
@@ -169,6 +179,7 @@
                             :channel channel
                             :position position
                             :parent-id parent-id
+                            :parent-name parent-name
                             :unread unread
                             :mentioned mentioned
                             :mention-count mention-count))
