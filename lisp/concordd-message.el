@@ -20,6 +20,20 @@
 (declare-function concordd-format-postprocess-mentions "concordd-format")
 (require 'markdown-mode nil t)
 
+;;; Customization
+
+(defcustom concordd-message-timestamp-align 'right
+  "Where to align message timestamps."
+  :type '(choice (const :tag "Left" left)
+                 (const :tag "Right" right))
+  :group 'concordd)
+
+(defcustom concordd-message-group-by-author t
+  "Group consecutive messages from the same author.
+When non-nil, don't repeat username for consecutive messages."
+  :type 'boolean
+  :group 'concordd)
+
 ;;; Data Structures
 
 (cl-defstruct concordd-message
@@ -89,25 +103,64 @@ This is called by ewoc whenever a message node needs to be rendered."
   (condition-case err
       (let* ((author (concordd-message-author message))
              (username (concordd-message--format-author author))
+             (author-id (plist-get author :id))
              (content (concordd-message-content message))
              (timestamp (concordd-message-timestamp message))
              (edited (concordd-message-edited-timestamp message))
+             (reactions (concordd-message-reactions message))
+             (thread-id (concordd-message-thread-id message))
              (guild-id (plist-get (concordd-message-state message) :guild-id))
-             (start-pos (point)))
+             (prev-author-id (plist-get (concordd-message-state message) :prev-author-id))
+             (start-pos (point))
+             ;; Always show header if message has reactions, thread, or is edited
+             ;; This ensures important metadata is never hidden by grouping
+             (force-header (or reactions thread-id edited))
+             (show-header (or force-header
+                             (not concordd-message-group-by-author)
+                             (not (equal author-id prev-author-id)))))
         
-        ;; Insert timestamp and author header
-        (insert (propertize (concordd-message--format-timestamp timestamp)
-                           'face 'shadow))
-        (insert " ")
-        (insert (propertize username
-                           'face '(:weight bold :foreground "#5865F2")))
-        (when edited
-          (insert (propertize " (edited)" 'face 'italic)))
-        (insert "\n")
+        ;; Insert header (timestamp + author) if needed
+        (when show-header
+          (let ((ts-str (concordd-message--format-timestamp timestamp))
+                (author-str (propertize username
+                                       'face '(:weight bold :foreground "#5865F2"))))
+            (if (eq concordd-message-timestamp-align 'right)
+                ;; Right-aligned timestamp
+                (let* ((line-parts (list author-str))
+                       ;; Add edited marker
+                       (_ (when edited
+                            (push (propertize " (edited)" 'face 'italic) line-parts)))
+                       ;; Add thread indicator
+                       (_ (when thread-id
+                            (push (propertize " 🧵" 'face 'shadow
+                                            'help-echo "This message has a thread")
+                                  line-parts)))
+                       (line-content (apply #'concat (nreverse line-parts)))
+                       (content-width (string-width line-content))
+                       (ts-width (string-width ts-str))
+                       (window-width (window-width))
+                       (padding (max 1 (- window-width content-width ts-width 2))))
+                  (insert line-content)
+                  (insert (propertize (make-string padding ?\s) 'face 'shadow))
+                  (insert (propertize ts-str 'face 'shadow)))
+              ;; Left-aligned timestamp
+              (insert (propertize ts-str 'face 'shadow))
+              (insert " ")
+              (insert author-str)
+              (when edited
+                (insert (propertize " (edited)" 'face 'italic)))
+              (when thread-id
+                (insert (propertize " 🧵" 'face 'shadow
+                                   'help-echo "This message has a thread"))))
+            (insert "\n")))
         
         ;; Insert message content
         (when (and content (> (length content) 0))
           (let ((content-start (point)))
+            ;; Add indentation for grouped messages
+            (when (and (not show-header) concordd-message-group-by-author)
+              (insert "  "))
+            
             ;; Pre-process mentions if concordd-format is loaded
             (let ((processed-content 
                    (if (fboundp 'concordd-format-preprocess-mentions)
@@ -127,11 +180,20 @@ This is called by ewoc whenever a message node needs to be rendered."
                   (narrow-to-region content-start (point))
                   (concordd-format-postprocess-mentions guild-id))))))
         
+        ;; Insert reactions if present (always on their own line)
+        (when reactions
+          (insert "\n")
+          (when (and (not show-header) concordd-message-group-by-author)
+            (insert "  "))
+          (insert (concordd-message--format-reactions reactions)))
+        
         (insert "\n")
         
-        ;; Store message ID as text property for the whole message
+        ;; Store message ID and author ID as text properties
         (put-text-property start-pos (point)
-                          'concordd-message-id (concordd-message-id message)))
+                          'concordd-message-id (concordd-message-id message))
+        (put-text-property start-pos (point)
+                          'concordd-author-id author-id))
     
     (error
      ;; Graceful error handling: display error and raw data
@@ -149,6 +211,25 @@ Returns the formatted content as a string with text properties."
     (markdown-view-mode)
     (font-lock-ensure)
     (buffer-string)))
+
+(defun concordd-message--format-reactions (reactions)
+  "Format REACTIONS list into a display string.
+REACTIONS is a list of plists with :emoji, :count, and :me keys."
+  (if (null reactions)
+      ""
+    (concat
+     (propertize "↪ " 'face 'shadow)  ; Reaction prefix
+     (mapconcat
+      (lambda (reaction)
+        (let ((emoji (plist-get reaction :emoji))
+              (count (plist-get reaction :count))
+              (me (plist-get reaction :me)))
+          (propertize
+           (format "%s %d" emoji count)
+           'face (if me '(:weight bold :background "#5865F2" :foreground "white") 
+                   '(:background "#2C2F33" :foreground "#99AAB5")))))
+      reactions
+      " "))))
 
 (provide 'concordd-message)
 ;;; concordd-message.el ends here

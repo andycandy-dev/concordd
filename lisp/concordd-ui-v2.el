@@ -175,14 +175,19 @@ Uses EWOC for efficient message display and incremental updates.
   "Display MESSAGES for CHANNEL-ID."
   (when-let ((buf (concordd-ui-v2--find-channel-buffer channel-id)))
     (with-current-buffer buf
-      (let ((inhibit-read-only t))
+      (let ((inhibit-read-only t)
+            (prev-author-id nil))
         ;; Messages come in reverse chronological order, so reverse them
         (dolist (msg-plist (reverse messages))
           (let ((msg (concordd-message-from-plist msg-plist)))
-            ;; Store guild-id in message state for formatting
+            ;; Store guild-id and previous author in message state for formatting
             (setf (concordd-message-state msg)
                   (plist-put (concordd-message-state msg) :guild-id concordd-ui-v2-guild-id))
+            (setf (concordd-message-state msg)
+                  (plist-put (concordd-message-state msg) :prev-author-id prev-author-id))
             (ewoc-enter-last concordd-message-ewoc msg)
+            ;; Track current author for next message
+            (setq prev-author-id (plist-get (concordd-message-author msg) :id))
             ;; Track oldest message for pagination
             (when (or (null concordd-ui-v2-oldest-message-id)
                      (string< (concordd-message-id msg) 
@@ -213,19 +218,32 @@ Uses EWOC for efficient message display and incremental updates.
 
 (defun concordd-ui-v2--prepend-messages (messages)
   "Prepend MESSAGES to current buffer's EWOC."
-  (let ((inhibit-read-only t))
+  (let ((inhibit-read-only t)
+        ;; Get the first message's author to set as prev for existing messages
+        (first-node (ewoc-nth concordd-message-ewoc 0))
+        (prev-author-id nil))
     ;; Messages come in reverse chronological order, process from end
     (dolist (msg-plist (reverse messages))
       (let ((msg (concordd-message-from-plist msg-plist)))
-        ;; Store guild-id in message state
+        ;; Store guild-id and prev-author in message state
         (setf (concordd-message-state msg)
               (plist-put (concordd-message-state msg) :guild-id concordd-ui-v2-guild-id))
+        (setf (concordd-message-state msg)
+              (plist-put (concordd-message-state msg) :prev-author-id prev-author-id))
         (ewoc-enter-first concordd-message-ewoc msg)
+        ;; Track current author for next message
+        (setq prev-author-id (plist-get (concordd-message-author msg) :id))
         ;; Update oldest message ID
         (when (or (null concordd-ui-v2-oldest-message-id)
                  (string< (concordd-message-id msg) 
                          concordd-ui-v2-oldest-message-id))
-          (setq concordd-ui-v2-oldest-message-id (concordd-message-id msg)))))))
+          (setq concordd-ui-v2-oldest-message-id (concordd-message-id msg)))))
+    ;; Update the first existing message's prev-author-id to link grouping
+    (when first-node
+      (let ((first-msg (ewoc-data first-node)))
+        (setf (concordd-message-state first-msg)
+              (plist-put (concordd-message-state first-msg) :prev-author-id prev-author-id))
+        (ewoc-invalidate concordd-message-ewoc first-node)))))
 
 ;;; Event handlers
 
@@ -238,10 +256,18 @@ Uses EWOC for efficient message display and incremental updates.
       (with-current-buffer buf
         (let ((inhibit-read-only t)
               (msg (concordd-message-from-plist msg-plist))
-              (at-bottom (= (point) (point-max))))
+              (at-bottom (= (point) (point-max)))
+              (last-node (ewoc-nth concordd-message-ewoc -1)))
           ;; Store guild-id in message state
           (setf (concordd-message-state msg)
                 (plist-put (concordd-message-state msg) :guild-id concordd-ui-v2-guild-id))
+          ;; Set prev-author-id from last message for grouping
+          (when last-node
+            (let ((last-msg (ewoc-data last-node)))
+              (setf (concordd-message-state msg)
+                    (plist-put (concordd-message-state msg) 
+                              :prev-author-id 
+                              (plist-get (concordd-message-author last-msg) :id)))))
           (ewoc-enter-last concordd-message-ewoc msg)
           ;; Auto-scroll if we were at bottom
           (when at-bottom
