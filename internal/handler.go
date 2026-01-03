@@ -36,6 +36,7 @@ func (h *Handler) SetDiscordClient(dc *DiscordClient) {
 	// Register Discord methods
 	h.RegisterMethod("listGuilds", h.handleListGuilds)
 	h.RegisterMethod("listChannels", h.handleListChannels)
+	h.RegisterMethod("listDMs", h.handleListDMs)
 	h.RegisterMethod("getMessages", h.handleGetMessages)
 	h.RegisterMethod("sendMessage", h.handleSendMessage)
 	h.RegisterMethod("replyToMessage", h.handleReplyToMessage)
@@ -108,6 +109,22 @@ func (h *Handler) handleListChannels(params json.RawMessage) (interface{}, error
 	}
 
 	channels, err := h.discord.GetChannels(discord.GuildID(guildID))
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"channels": channels,
+	}, nil
+}
+
+// handleListDMs handles the listDMs method
+func (h *Handler) handleListDMs(params json.RawMessage) (interface{}, error) {
+	if h.discord == nil {
+		return nil, NewError(NotConnected, "Discord client not initialized")
+	}
+
+	channels, err := h.discord.GetDMChannels()
 	if err != nil {
 		return nil, err
 	}

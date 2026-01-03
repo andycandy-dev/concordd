@@ -18,6 +18,7 @@
 ;; Declare functions to avoid circular dependencies
 (declare-function concordd-list-guilds "concordd")
 (declare-function concordd-list-channels "concordd")
+(declare-function concordd-list-dms "concordd")
 (declare-function concordd-list-threads "concordd")
 (declare-function concordd-ui-v2-open-channel "concordd-ui-v2")
 
@@ -338,6 +339,48 @@ Otherwise, prompt for guild first."
 Starts with guild selection."
   (interactive)
   (consult-concordd-guild))
+
+;;;###autoload
+(defun consult-concordd-dms ()
+  "Browse direct message channels using consult."
+  (interactive)
+  (require 'concordd-ui-v2)
+  (concordd-list-dms
+   (lambda (result)
+     (let* ((channels (plist-get result :channels))
+            (candidates
+             (mapcar (lambda (ch)
+                       (let ((name (plist-get ch :name))
+                             (unread (plist-get ch :unread))
+                             (mentions (plist-get ch :mentionCount)))
+                         ;; Return cons cell: (display-name . channel-plist)
+                         (cons (propertize name
+                                          'unread unread
+                                          'mentions mentions)
+                               ch)))
+                     channels)))
+       (when-let ((selected (consult--read
+                            candidates
+                            :prompt "Direct Messages: "
+                            :category 'concordd-dm
+                            :sort nil
+                            :require-match t
+                            :annotate
+                            (lambda (cand)
+                              (let ((unread (get-text-property 0 'unread cand))
+                                    (mentions (get-text-property 0 'mentions cand)))
+                                (concat
+                                 (propertize " " 'display '(space :align-to 40))
+                                 (if unread
+                                     (propertize "[unread]" 'face 'warning)
+                                   "")
+                                 (when (and mentions (> mentions 0))
+                                   (propertize (format " @%d" mentions)
+                                              'face 'error)))))
+                            :lookup #'consult--lookup-cdr)))
+         (let ((id (plist-get selected :id))
+               (name (plist-get selected :name)))
+           (concordd-ui-v2-open-channel id name nil)))))))
 
 ;;; Embark Integration
 

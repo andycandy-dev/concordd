@@ -132,6 +132,11 @@ CALLBACK is called with a list of channel objects."
    `(:guildId ,guild-id)
    callback))
 
+(defun concordd-list-dms (callback)
+  "List all direct message channels.
+CALLBACK is called with a list of DM channel objects."
+  (concordd-ipc-send-request "listDMs" nil callback))
+
 (defun concordd-list-forum-channels (guild-id callback)
   "List forum channels in GUILD-ID.
 CALLBACK is called with a list of forum channel objects (type 15)."
@@ -314,6 +319,39 @@ CALLBACK is called with result containing :tags list."
        (concordd-ui-v2-browser)))
     (_
      (user-error "Invalid concordd-ui-implementation: %s" concordd-ui-implementation))))
+
+(defun concordd-open-dm ()
+  "Open a direct message channel."
+  (interactive)
+  (unless (concordd-connected-p)
+    (user-error "Not connected to Discord. Run M-x concordd-connect"))
+  
+  (concordd-list-dms
+   (lambda (result)
+     (let* ((channels (plist-get result :channels))
+            (choices (mapcar (lambda (ch)
+                              (cons (plist-get ch :name)
+                                    (plist-get ch :id)))
+                            channels))
+            (selected (completing-read "Open DM: " choices nil t)))
+       (when selected
+         (let ((channel-id (cdr (assoc selected choices))))
+           (pcase concordd-ui-implementation
+             ('v2
+              (require 'concordd-ui-v2)
+              (concordd-ui-v2-open-channel channel-id selected nil))
+             ('v1
+              (require 'concordd-ui)
+              (concordd-get-messages 
+               channel-id 
+               (lambda (result)
+                 (concordd-ui-show-channel 
+                  selected 
+                  (plist-get result :messages)))
+               50 
+               nil))
+             (_ (user-error "Invalid concordd-ui-implementation: %s" 
+                           concordd-ui-implementation)))))))))
 
 (provide 'concordd)
 

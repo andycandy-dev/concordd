@@ -194,6 +194,78 @@ func (dc *DiscordClient) GetChannels(guildID discord.GuildID) ([]Channel, error)
 	return result, nil
 }
 
+// GetDMChannels returns all direct message channels
+func (dc *DiscordClient) GetDMChannels() ([]Channel, error) {
+	if !dc.IsConnected() {
+		return nil, NewError(NotConnected, "Not connected to Discord")
+	}
+
+	channels, err := dc.state.Cabinet.PrivateChannels()
+	if err != nil {
+		return nil, NewError(InternalError, fmt.Sprintf("Failed to get DM channels: %v", err))
+	}
+
+	result := make([]Channel, 0, len(channels))
+	for _, c := range channels {
+		// Only include DM channels (DirectMessage = 1, GroupDM = 3)
+		if c.Type != discord.DirectMessage && c.Type != discord.GroupDM {
+			continue
+		}
+
+		// Convert to IPC channel
+		ch := ToChannel(c)
+
+		// For DMs, we need to set a readable name
+		if c.Type == discord.DirectMessage {
+			// 1-on-1 DM: use the other user's name
+			if len(c.DMRecipients) > 0 {
+				ch.Name = c.DMRecipients[0].Username
+			} else {
+				ch.Name = "Unknown User"
+			}
+		} else if c.Type == discord.GroupDM {
+			// Group DM: use channel name or list of participants
+			if c.Name != "" {
+				ch.Name = c.Name
+			} else if len(c.DMRecipients) > 0 {
+				// Build name from recipients (up to 3 names)
+				names := make([]string, 0, len(c.DMRecipients))
+				for i, r := range c.DMRecipients {
+					if i >= 3 {
+						names = append(names, fmt.Sprintf("and %d more", len(c.DMRecipients)-3))
+						break
+					}
+					names = append(names, r.Username)
+				}
+				ch.Name = fmt.Sprintf("Group: %s", names[0])
+				if len(names) > 1 {
+					ch.Name = fmt.Sprintf("Group: %s", names[0])
+					for i := 1; i < len(names); i++ {
+						ch.Name += ", " + names[i]
+					}
+				}
+			} else {
+				ch.Name = "Group DM"
+			}
+		}
+
+		// Add unread information
+		opts := ningen.UnreadOpts{IncludeMutedCategories: true}
+		indication := dc.state.ChannelIsUnread(c.ID, opts)
+		ch.Unread = indication == ningen.ChannelUnread || indication == ningen.ChannelMentioned
+		ch.Mentioned = indication == ningen.ChannelMentioned
+
+		readState := dc.state.ReadState.ReadState(c.ID)
+		if readState != nil {
+			ch.MentionCount = readState.MentionCount
+		}
+
+		result = append(result, ch)
+	}
+
+	return result, nil
+}
+
 // GetMessages returns messages from a channel
 func (dc *DiscordClient) GetMessages(channelID discord.ChannelID, limit uint, before discord.MessageID) ([]Message, error) {
 	if !dc.IsConnected() {
