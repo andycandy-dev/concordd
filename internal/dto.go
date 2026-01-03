@@ -36,6 +36,7 @@ type Channel struct {
 	Unread       bool   `json:"unread"`
 	Mentioned    bool   `json:"mentioned"`
 	MentionCount int    `json:"mentionCount"`
+	MessageCount int    `json:"messageCount,omitempty"` // For forum channels: active thread count
 }
 
 // Message represents a Discord message

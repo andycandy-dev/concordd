@@ -104,6 +104,7 @@
            (parent-name (plist-get data :parent-name))
            (mention-count (plist-get data :mention-count))
            (mentioned (plist-get data :mentioned))
+           (message-count (plist-get data :message-count))
            (parts '()))
       ;; Add type information
       (push (propertize
@@ -123,6 +124,11 @@
       ;; Add mention count
       (when (and mentioned (> mention-count 0))
         (push (propertize (format "@%d" mention-count) 'face 'font-lock-warning-face)
+              parts))
+      ;; Add thread count for forum channels
+      (when (and (= type 15) message-count (> message-count 0))
+        (push (propertize (format "%d threads" message-count)
+                          'face 'font-lock-comment-face)
               parts))
       (when parts
         (concat
@@ -160,6 +166,7 @@
              (unread (eq (plist-get channel :unread) t))
              (mentioned (eq (plist-get channel :mentioned) t))
              (mention-count (or (plist-get channel :mentionCount) 0))
+             (message-count (or (plist-get channel :messageCount) 0))
              ;; Add indicators
              (prefix (concat
                      (if mentioned "@ " "")
@@ -178,7 +185,8 @@
                             :parent-name parent-name
                             :unread unread
                             :mentioned mentioned
-                            :mention-count mention-count))
+                            :mention-count mention-count
+                            :message-count message-count))
                 result))))
     (setq result (nreverse result))
     ;; Store for annotate function  
@@ -271,7 +279,7 @@ Otherwise, prompt for guild first."
          (mapcar (lambda (thread)
                    (let* ((name (plist-get thread :name))
                           (id (plist-get thread :id))
-                          (message-count (or (plist-get thread :message_count) 0))
+                          (message-count (or (plist-get thread :messageCount) 0))
                           (metadata (plist-get thread :thread_metadata))
                           (archived (and metadata (plist-get metadata :archived)))
                           (locked (and metadata (plist-get metadata :locked)))

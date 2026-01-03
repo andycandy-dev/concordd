@@ -155,6 +155,18 @@ func (dc *DiscordClient) GetChannels(guildID discord.GuildID) ([]Channel, error)
 		return nil, NewError(GuildNotFound, fmt.Sprintf("Failed to get channels: %v", err))
 	}
 
+	// Build thread count map for forum channels
+	threadCounts := make(map[discord.ChannelID]int)
+	for _, c := range channels {
+		if c.Type == discord.GuildPublicThread ||
+			c.Type == discord.GuildPrivateThread ||
+			c.Type == discord.GuildAnnouncementThread {
+			if c.ParentID.IsValid() {
+				threadCounts[c.ParentID]++
+			}
+		}
+	}
+
 	result := make([]Channel, 0, len(channels))
 	for _, c := range channels {
 		// Convert to IPC channel
@@ -169,6 +181,11 @@ func (dc *DiscordClient) GetChannels(guildID discord.GuildID) ([]Channel, error)
 		readState := dc.state.ReadState.ReadState(c.ID)
 		if readState != nil {
 			ch.MentionCount = readState.MentionCount
+		}
+
+		// Add thread count for forum channels
+		if c.Type == discord.GuildForum {
+			ch.MessageCount = threadCounts[c.ID]
 		}
 
 		result = append(result, ch)
