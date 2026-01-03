@@ -283,11 +283,13 @@ Otherwise, prompt for guild first."
                           (metadata (plist-get thread :thread_metadata))
                           (archived (and metadata (plist-get metadata :archived)))
                           (locked (and metadata (plist-get metadata :locked)))
+                          ;; Truncate long names to prevent overflow
+                          (truncated-name (truncate-string-to-width name 60 nil nil "…"))
                           ;; Add indicators to display
                           (indicators (concat
                                       (if archived "🗃 " "")
                                       (if locked "🔒 " "")))
-                          (display (format "%s%s" indicators name)))
+                          (display (format "%s%s" indicators truncated-name)))
                      (cons display (list :id id
                                         :name name
                                         :thread thread
