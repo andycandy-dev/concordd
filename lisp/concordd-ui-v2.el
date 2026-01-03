@@ -89,6 +89,8 @@ Uses EWOC for efficient message display and incremental updates.
 \\{concordd-ui-v2-channel-mode-map}"
   (setq buffer-read-only t)
   (setq-local revert-buffer-function #'concordd-ui-v2-channel-revert)
+  ;; Enable visual-line-mode for better long message wrapping
+  (visual-line-mode 1)
   
   ;; Evil integration
   (when (bound-and-true-p evil-mode)
