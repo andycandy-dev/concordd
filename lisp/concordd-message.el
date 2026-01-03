@@ -157,10 +157,6 @@ This is called by ewoc whenever a message node needs to be rendered."
         ;; Insert message content
         (when (and content (> (length content) 0))
           (let ((content-start (point)))
-            ;; Add indentation for grouped messages
-            (when (and (not show-header) concordd-message-group-by-author)
-              (insert "  "))
-            
             ;; Pre-process mentions if concordd-format is loaded
             (let ((processed-content 
                    (if (fboundp 'concordd-format-preprocess-mentions)
@@ -169,6 +165,8 @@ This is called by ewoc whenever a message node needs to be rendered."
               ;; Insert content in a temporary markdown-view-mode buffer to get formatting
               (if (featurep 'markdown-mode)
                   (let ((formatted (concordd-message--render-markdown processed-content)))
+                    ;; Trim any leading/trailing whitespace from markdown output
+                    (setq formatted (string-trim formatted))
                     (insert formatted))
                 ;; Fallback: just insert plain text
                 (insert processed-content)))
@@ -183,8 +181,6 @@ This is called by ewoc whenever a message node needs to be rendered."
         ;; Insert reactions if present (always on their own line)
         (when reactions
           (insert "\n")
-          (when (and (not show-header) concordd-message-group-by-author)
-            (insert "  "))
           (insert (concordd-message--format-reactions reactions)))
         
         (insert "\n")
@@ -210,7 +206,8 @@ Returns the formatted content as a string with text properties."
     (insert content)
     (markdown-view-mode)
     (font-lock-ensure)
-    (buffer-string)))
+    ;; Return trimmed content to avoid alignment issues
+    (string-trim (buffer-string))))
 
 (defun concordd-message--format-reactions (reactions)
   "Format REACTIONS list into a display string.
