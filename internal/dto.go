@@ -27,16 +27,17 @@ type Guild struct {
 
 // Channel represents a Discord channel
 type Channel struct {
-	ID           string `json:"id"`
-	GuildID      string `json:"guildId,omitempty"`
-	Name         string `json:"name"`
-	Type         int    `json:"type"`
-	Position     int    `json:"position"`
-	ParentID     string `json:"parentId,omitempty"`
-	Unread       bool   `json:"unread"`
-	Mentioned    bool   `json:"mentioned"`
-	MentionCount int    `json:"mentionCount"`
-	MessageCount int    `json:"messageCount,omitempty"` // For forum channels: active thread count
+	ID              string `json:"id"`
+	GuildID         string `json:"guildId,omitempty"`
+	Name            string `json:"name"`
+	Type            int    `json:"type"`
+	Position        int    `json:"position"`
+	ParentID        string `json:"parentId,omitempty"`
+	Unread          bool   `json:"unread"`
+	Mentioned       bool   `json:"mentioned"`
+	MentionCount    int    `json:"mentionCount"`
+	MessageCount    int    `json:"messageCount,omitempty"` // For forum channels: active thread count
+	LastMessageID   string `json:"lastMessageId,omitempty"` // ID of last message in channel
 }
 
 // Message represents a Discord message
@@ -147,12 +148,13 @@ func ToGuild(g discord.Guild) Guild {
 // ToChannel converts arikawa Channel to IPC Channel (unread info added separately)
 func ToChannel(c discord.Channel) Channel {
 	return Channel{
-		ID:       c.ID.String(),
-		GuildID:  c.GuildID.String(),
-		Name:     c.Name,
-		Type:     int(c.Type),
-		Position: c.Position,
-		ParentID: c.ParentID.String(),
+		ID:            c.ID.String(),
+		GuildID:       c.GuildID.String(),
+		Name:          c.Name,
+		Type:          int(c.Type),
+		Position:      c.Position,
+		ParentID:      c.ParentID.String(),
+		LastMessageID: c.LastMessageID.String(),
 	}
 }
 

@@ -8,8 +8,17 @@
 
 ;;; Commentary:
 
-;; This file provides consult-based navigation for Concordd.
-;; Uses completing-read with consult for guild/channel/thread selection.
+;; This file provides consult-based navigation for Concordd, offering
+;; a modern incremental narrowing interface for browsing Discord.
+;;
+;; Main entry points:
+;; - `consult-concordd-browse' - Start with guild selection
+;; - `consult-concordd-activity' - Browse all channels/threads by recent activity
+;; - `consult-concordd-dms' - Browse direct messages
+;; - `consult-concordd-channel' - Browse channels in a guild
+;;
+;; The activity feed is particularly useful for finding recent conversations
+;; across all channels and threads in a guild, sorted by latest message.
 
 ;;; Code:
 
@@ -377,6 +386,62 @@ Starts with guild selection."
          (let ((id (plist-get selected :id))
                (name (plist-get selected :name)))
            (concordd-ui-v2-open-channel id name nil)))))))
+
+;;;###autoload
+(defun consult-concordd-activity (&optional guild-id)
+  "Browse all channels in a guild sorted by recent activity.
+If GUILD-ID is provided, uses it; otherwise prompts for guild selection.
+This is like `consult-concordd-channel' but sorted by last message time."
+  (interactive)
+  (if guild-id
+      (progn
+        (message "Loading activity for guild %s..." guild-id)
+        (concordd-list-channels
+         guild-id
+         (lambda (result)
+           (let* ((channels (plist-get result :channels))
+                  ;; Sort by lastMessageId before creating candidates
+                  (sorted-channels
+                   (sort (copy-sequence channels)
+                         (lambda (a b)
+                           (let ((a-id (or (plist-get a :lastMessageId) "0"))
+                                 (b-id (or (plist-get b :lastMessageId) "0")))
+                             (string> a-id b-id)))))
+                  (candidates (concordd-consult--channel-candidates sorted-channels)))
+             (if (null candidates)
+                 (message "No channels found in guild")
+               (let ((selected (consult--read
+                               candidates
+                               :prompt "Recent Activity: "
+                               :sort nil  ; Don't re-sort, we already sorted
+                               :require-match t
+                               :category 'concordd-activity
+                               :annotate #'concordd-consult--channel-annotate
+                               :lookup #'consult--lookup-cdr)))
+                 (when selected
+                   (let ((channel-id (plist-get selected :id))
+                         (channel-name (plist-get selected :name))
+                         (channel-type (plist-get selected :type)))
+                     ;; Route based on channel type
+                     (pcase channel-type
+                       (15 (consult-concordd-forum-thread channel-id channel-name guild-id))
+                       (_ (require 'concordd-ui-v2)
+                          (concordd-ui-v2-open-channel channel-id channel-name guild-id)))))))))))
+    ;; No guild-id provided, prompt for guild first
+    (concordd-list-guilds
+     (lambda (result)
+       (let* ((guilds (plist-get result :guilds))
+              (guild (consult--read
+                      (mapcar (lambda (g)
+                                (cons (plist-get g :name) g))
+                              guilds)
+                      :prompt "Select Guild: "
+                      :category 'concordd-guild
+                      :sort nil
+                      :require-match t
+                      :lookup #'consult--lookup-cdr)))
+         (when guild
+           (consult-concordd-activity (plist-get guild :id))))))))
 
 ;;; Embark Integration
 
