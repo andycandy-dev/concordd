@@ -1,9 +1,11 @@
 package internal
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -194,7 +196,7 @@ func (dc *DiscordClient) GetChannels(guildID discord.GuildID) ([]Channel, error)
 	return result, nil
 }
 
-// GetDMChannels returns all direct message channels
+// GetDMChannels returns all direct message channels sorted by recent activity
 func (dc *DiscordClient) GetDMChannels() ([]Channel, error) {
 	if !dc.IsConnected() {
 		return nil, NewError(NotConnected, "Not connected to Discord")
@@ -204,6 +206,18 @@ func (dc *DiscordClient) GetDMChannels() ([]Channel, error) {
 	if err != nil {
 		return nil, NewError(InternalError, fmt.Sprintf("Failed to get DM channels: %v", err))
 	}
+
+	// Sort channels by most recent message (descending order)
+	slices.SortFunc(channels, func(a, b discord.Channel) int {
+		msgID := func(ch discord.Channel) discord.MessageID {
+			if ch.LastMessageID.IsValid() {
+				return ch.LastMessageID
+			}
+			return discord.MessageID(ch.ID)
+		}
+		// Descending order (most recent first)
+		return cmp.Compare(msgID(b), msgID(a))
+	})
 
 	result := make([]Channel, 0, len(channels))
 	for _, c := range channels {
@@ -229,7 +243,7 @@ func (dc *DiscordClient) GetDMChannels() ([]Channel, error) {
 				ch.Name = c.Name
 			} else if len(c.DMRecipients) > 0 {
 				// Build name from recipients (up to 3 names)
-				names := make([]string, 0, len(c.DMRecipients))
+				names := make([]string, 0, 3)
 				for i, r := range c.DMRecipients {
 					if i >= 3 {
 						names = append(names, fmt.Sprintf("and %d more", len(c.DMRecipients)-3))
@@ -237,12 +251,14 @@ func (dc *DiscordClient) GetDMChannels() ([]Channel, error) {
 					}
 					names = append(names, r.Username)
 				}
-				ch.Name = fmt.Sprintf("Group: %s", names[0])
-				if len(names) > 1 {
-					ch.Name = fmt.Sprintf("Group: %s", names[0])
+				// Join all names into a single string
+				if len(names) > 0 {
+					ch.Name = "Group: " + names[0]
 					for i := 1; i < len(names); i++ {
 						ch.Name += ", " + names[i]
 					}
+				} else {
+					ch.Name = "Group DM"
 				}
 			} else {
 				ch.Name = "Group DM"
