@@ -182,7 +182,9 @@
                      (if mentioned "@ " "")
                      (if unread "● " "")
                      icon))
-             (display (format "%-3s %s" prefix name)))
+             ;; Truncate long names to prevent overflow (same as threads)
+             (truncated-name (truncate-string-to-width name 40 nil nil "…"))
+             (display (format "%s%s" prefix truncated-name)))
         ;; Only show displayable channel types (not categories)
         (unless (= type 4)
           (push (cons display 
@@ -290,7 +292,7 @@ Otherwise, prompt for guild first."
                           (archived (and metadata (plist-get metadata :archived)))
                           (locked (and metadata (plist-get metadata :locked)))
                           ;; Truncate long names to prevent overflow
-                          (truncated-name (truncate-string-to-width name 60 nil nil "…"))
+                          (truncated-name (truncate-string-to-width name 55 nil nil "…"))
                           ;; Add indicators to display
                           (indicators (concat
                                       (if archived "🗃 " "")
