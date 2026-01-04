@@ -266,12 +266,27 @@ func (dc *DiscordClient) GetDMChannels() ([]Channel, error) {
 		}
 
 		// Add unread information
-		opts := ningen.UnreadOpts{IncludeMutedCategories: true}
-		indication := dc.state.ChannelIsUnread(c.ID, opts)
+		// For DMs, we need custom unread logic because HasPermissions doesn't work for DMs
+		// and ningen's ChannelIsUnread returns ChannelRead early
+		indication := ningen.ChannelRead
+		
+		readState := dc.state.ReadState.ReadState(c.ID)
+		if readState != nil && readState.LastMessageID.IsValid() {
+			// Check for mentions first (they override everything)
+			if readState.MentionCount > 0 {
+				indication = ningen.ChannelMentioned
+			} else {
+				// For DMs, directly compare read state with channel's last message
+				// Skip the permission check that ChannelIsUnread does
+				if c.LastMessageID.IsValid() && readState.LastMessageID < c.LastMessageID {
+					indication = ningen.ChannelUnread
+				}
+			}
+		}
+		
 		ch.Unread = indication == ningen.ChannelUnread || indication == ningen.ChannelMentioned
 		ch.Mentioned = indication == ningen.ChannelMentioned
 
-		readState := dc.state.ReadState.ReadState(c.ID)
 		if readState != nil {
 			ch.MentionCount = readState.MentionCount
 		}

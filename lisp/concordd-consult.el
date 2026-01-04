@@ -371,7 +371,7 @@ Starts with guild selection."
                                     (mentions (get-text-property 0 'mentions cand)))
                                 (concat
                                  (propertize " " 'display '(space :align-to 40))
-                                 (if unread
+                                 (if (eq unread t)
                                      (propertize "[unread]" 'face 'warning)
                                    "")
                                  (when (and mentions (> mentions 0))
