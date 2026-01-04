@@ -266,10 +266,6 @@ Otherwise, prompt for guild first."
       (when locked
         (push (propertize "locked" 'face 'font-lock-warning-face)
               parts))
-      ;; Add ID (last 8 chars)
-      (push (propertize (format "ID:%s" (substring thread-id -8))
-                        'face 'font-lock-doc-face)
-            parts)
       (concat
        (propertize " " 'display '(space :align-to 60))
        (string-join (nreverse parts) " ")))))
