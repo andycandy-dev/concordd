@@ -331,6 +331,84 @@ Discord Gateway
 - Keybindings and navigation improvements
 - More robust error handling
 
+## Notification Tracking
+
+The `concordd-notify` package provides intelligent notification tracking with modeline integration.
+
+### Setup
+
+```elisp
+(require 'concordd-notify)
+
+;; Track specific guild(s)
+(setq concordd-notify-tracked-guilds '("1116381924856971375"))
+
+;; Or track specific channels only
+(setq concordd-notify-tracked-channels '("channel-id-1" "channel-id-2"))
+
+;; Track direct messages (default: t)
+(setq concordd-notify-track-dms t)
+
+;; Only track mentions (default: nil)
+(setq concordd-notify-mentions-only nil)
+
+;; Enable notification tracking
+(concordd-notify-mode 1)
+```
+
+### Features
+
+- **Queue-based navigation**: Click modeline to open next unread channel
+- **Smart counting**: Tracks multiple messages per channel correctly
+- **Mention highlighting**: Shows mention count with `@` prefix in urgent color
+- **Auto-clear**: Automatically clears notifications when you open a channel
+- **Configurable tracking**: Track specific guilds, channels, or DMs
+
+### Modeline Display
+
+The modeline shows: `💬 @2 5` where:
+- `💬` = Discord icon (configurable)
+- `@2` = 2 mentions (shown in urgent/error color)
+- `5` = 5 total unread messages
+
+Click the modeline segment to navigate to the next unread channel.
+
+### Commands
+
+- `M-x concordd-notify-next-channel` - Open next unread channel
+- `M-x concordd-notify-clear-all` - Clear all notifications
+- `M-x concordd-notify-mode` - Toggle notification tracking
+
+### Doom Modeline Integration
+
+For Doom Emacs users, add the segment to your modeline:
+
+```elisp
+(after! doom-modeline
+  (doom-modeline-def-modeline 'main
+    '(bar workspace-name window-number modals matches buffer-info remote-host buffer-position word-count parrot selection-info concordd-notify)
+    '(objed-state misc-info persp-name battery grip irc mu4e gnus github debug repl lsp minor-modes input-method indent-info buffer-encoding major-mode process vcs checker)))
+```
+
+### Example Configuration
+
+```elisp
+(use-package! concordd-notify
+  :after concordd
+  :config
+  ;; Track my main guild and DMs
+  (setq concordd-notify-tracked-guilds '("1116381924856971375")
+        concordd-notify-track-dms t)
+  
+  ;; Enable tracking
+  (concordd-notify-mode 1)
+  
+  ;; Bind quick navigation
+  (map! :leader
+        :desc "Next unread Discord" "dn" #'concordd-notify-next-channel
+        :desc "Clear Discord notifications" "dx" #'concordd-notify-clear-all))
+```
+
 ## License
 
 Same as the discordo project.

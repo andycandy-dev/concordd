@@ -183,7 +183,7 @@
                      (if unread "● " "")
                      icon))
              ;; Truncate long names to prevent overflow (same as threads)
-             (truncated-name (truncate-string-to-width name 40 nil nil "…"))
+             (truncated-name (truncate-string-to-width name 50 nil nil "…"))
              (display (format "%s%s" prefix truncated-name)))
         ;; Only show displayable channel types (not categories)
         (unless (= type 4)
