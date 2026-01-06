@@ -47,17 +47,27 @@ jobs:
           elif [ "${ARCH}" = "arm64" ]; then
             ARCH="aarch64"
           fi
-          BINARY_NAME=concordd-${{ matrix.goos }}-${ARCH}
+          BINARY_NAME=concordd
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BINARY_NAME="${BINARY_NAME}.exe"
           fi
+          ARCHIVE_NAME=concordd-${{ matrix.goos }}-${ARCH}
+          
+          # Build binary
           go build -ldflags="-s -w -X main.version=${VERSION}" -o "${BINARY_NAME}" .
+          
+          # Create archive
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            zip "${ARCHIVE_NAME}.zip" "${BINARY_NAME}"
+          else
+            tar czf "${ARCHIVE_NAME}.tar.gz" "${BINARY_NAME}"
+          fi
           
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: concordd-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: concordd-*
+          path: concordd-*.*
 
   release:
     name: Create release
@@ -75,7 +85,7 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir -p release
-          find artifacts -type f -name 'concordd-*' -exec cp {} release/ \;
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} release/ \;
           ls -lh release/
 
       - name: Create release

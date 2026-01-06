@@ -96,14 +96,47 @@ Can be either:
   "Download concordd binary from URL and return path."
   (let* ((binary-dir (expand-file-name "concordd/bin" user-emacs-directory))
          (binary-name (if (eq system-type 'windows-nt) "concordd.exe" "concordd"))
-         (binary-path (expand-file-name binary-name binary-dir)))
+         (binary-path (expand-file-name binary-name binary-dir))
+         (is-archive (or (string-suffix-p ".tar.gz" url)
+                        (string-suffix-p ".zip" url)))
+         (archive-path (expand-file-name 
+                        (if (string-suffix-p ".zip" url) "concordd.zip" "concordd.tar.gz")
+                        binary-dir)))
     (unless (file-exists-p binary-dir)
       (make-directory binary-dir t))
-    (message "Downloading concordd binary from %s..." url)
-    (url-copy-file url binary-path t)
-    (unless (eq system-type 'windows-nt)
-      (set-file-modes binary-path #o755))
-    (message "Downloaded concordd binary to %s" binary-path)
+    
+    (if is-archive
+        (progn
+          ;; Download archive
+          (message "Downloading concordd archive from %s..." url)
+          (url-copy-file url archive-path t)
+          
+          ;; Extract
+          (message "Extracting archive...")
+          (if (string-suffix-p ".zip" url)
+              ;; Extract ZIP (Windows)
+              (let ((default-directory binary-dir))
+                (call-process "unzip" nil nil nil "-o" archive-path))
+            ;; Extract tar.gz (Unix)
+            (let ((default-directory binary-dir))
+              (call-process "tar" nil nil nil "xzf" archive-path)))
+          
+          ;; Clean up archive
+          (delete-file archive-path)
+          
+          ;; Set executable permissions on Unix
+          (unless (eq system-type 'windows-nt)
+            (set-file-modes binary-path #o755))
+          
+          (message "Extracted concordd binary to %s" binary-path))
+      
+      ;; Direct binary download (legacy support)
+      (message "Downloading concordd binary from %s..." url)
+      (url-copy-file url binary-path t)
+      (unless (eq system-type 'windows-nt)
+        (set-file-modes binary-path #o755))
+      (message "Downloaded concordd binary to %s" binary-path))
+    
     binary-path))
 
 (defun concordd--ensure-binary ()
