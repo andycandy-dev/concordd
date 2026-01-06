@@ -192,6 +192,7 @@ Returns non-nil if daemon was started successfully."
            :name "concordd"
            :buffer "*concordd*"
            :command (list binary 
+                         "start"
                          "--token" concordd-discord-token
                          "--socket" concordd-socket-path)
            :connection-type 'pipe
