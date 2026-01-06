@@ -15,7 +15,7 @@
         packages = {
           default = pkgs.buildGoModule {
             pname = "concordd";
-            version = "1.0.0-${self.shortRev or "dirty"}";
+            version = "0.1.0";
             src = ./.;
             
             # This hash will need to be updated after first build
@@ -25,6 +25,7 @@
             ldflags = [
               "-s"
               "-w"
+              "-X main.version=0.1.0"
             ];
 
             meta = with pkgs.lib; {

@@ -14,6 +14,7 @@ import (
 )
 
 var (
+	version             = "0.1.0" // Set by ldflags during build
 	socketPath          string
 	token               string
 	logPath             string
@@ -24,8 +25,9 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "concordd",
-	Short: "Discord IPC daemon for external clients",
+	Use:     "concordd",
+	Short:   "Discord IPC daemon for external clients",
+	Version: version,
 	Long: `A long-running daemon that maintains a Discord connection and exposes
 an IPC interface via Unix domain socket for external clients (e.g., Emacs).`,
 }
