@@ -250,19 +250,16 @@ When enabled, tracks unread messages and displays them in the modeline."
   :lighter nil
   (if concordd-notify-mode
       (progn
-        ;; Get current user ID if connected, otherwise defer until connection
-        (if (concordd-connected-p)
-            (concordd-get-current-user
-             (lambda (result)
-               (setq concordd-notify--current-user-id (plist-get result :id))))
-          ;; Register a one-time hook to fetch user ID after connection
-          (defun concordd-notify--fetch-user-id ()
-            "Fetch current user ID after connection."
-            (concordd-get-current-user
-             (lambda (result)
-               (setq concordd-notify--current-user-id (plist-get result :id))))
-            (remove-hook 'concordd-after-connect-hook #'concordd-notify--fetch-user-id))
-          (add-hook 'concordd-after-connect-hook #'concordd-notify--fetch-user-id))
+        ;; Register a hook to fetch user ID after connection
+        (defun concordd-notify--fetch-user-id ()
+          "Fetch current user ID after connection."
+          (run-with-timer 1 nil  ;; Wait 1 second for daemon Ready event
+            (lambda ()
+              (concordd-get-current-user
+               (lambda (result)
+                 (setq concordd-notify--current-user-id (plist-get result :id))))))
+          (remove-hook 'concordd-after-connect-hook #'concordd-notify--fetch-user-id))
+        (add-hook 'concordd-after-connect-hook #'concordd-notify--fetch-user-id)
         
         ;; Register event handler
         (concordd-on 'messageCreated #'concordd-notify--handle-message-created)
