@@ -30,6 +30,7 @@ type DiscordClient struct {
 	historySize                int
 	defaultAutoArchiveDuration int // minutes: 60, 1440, 4320, or 10080
 	connected                  bool
+	currentUserID              discord.UserID
 	mu                         sync.RWMutex
 }
 
@@ -787,6 +788,7 @@ func (dc *DiscordClient) GetForumTags(channelID discord.ChannelID) ([]Tag, error
 // Event handlers
 
 func (dc *DiscordClient) onReady(r *gateway.ReadyEvent) {
+	dc.currentUserID = r.User.ID
 	slog.Info("Discord ready", "user", r.User.Username)
 }
 
@@ -813,7 +815,10 @@ func (dc *DiscordClient) onMessageCreate(m *gateway.MessageCreateEvent) {
 	dc.server.Broadcast(&Notification{
 		JSONRPC: "2.0",
 		Method:  "messageCreated",
-		Params:  mustMarshal(map[string]interface{}{"message": msg}),
+		Params: mustMarshal(map[string]interface{}{
+			"message":     msg,
+			"channelName": channel.Name,
+		}),
 	})
 }
 

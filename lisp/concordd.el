@@ -61,6 +61,9 @@ v2 - New EWOC-based UI with incremental updates (recommended)"
   :type 'boolean
   :group 'concordd)
 
+(defvar concordd-after-connect-hook nil
+  "Hook run after successfully connecting to concordd daemon.")
+
 ;;; Connection management
 
 ;;;###autoload
@@ -73,7 +76,8 @@ Optional SOCKET-PATH overrides `concordd-socket-path'."
     ;; Test connection with ping
     (concordd-ping
      (lambda (result)
-       (message "Concordd daemon ready: %s" (plist-get result :status))))))
+       (message "Concordd daemon ready: %s" (plist-get result :status))
+       (run-hooks 'concordd-after-connect-hook)))))
 
 (defun concordd-disconnect ()
   "Disconnect from the concordd daemon."
@@ -112,6 +116,11 @@ CALLBACK is called with the result."
        (lambda (result)
          (when (called-interactively-p 'interactive)
            (message "Pong! %s" (plist-get result :timestamp)))))))
+
+(defun concordd-get-current-user (callback)
+  "Get current user ID.
+CALLBACK is called with the result containing :id."
+  (concordd-ipc-send-request "getCurrentUser" nil callback))
 
 (defun concordd-list-guilds (callback)
   "List all guilds.

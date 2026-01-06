@@ -53,6 +53,7 @@ type Message struct {
 	Embeds            int        `json:"embeds"`      // Count for MVP
 	Reactions         []Reaction `json:"reactions"`
 	ReferencedMessage *string    `json:"referencedMessage,omitempty"` // Message ID for replies
+	Mentions          []string   `json:"mentions"`                    // User IDs mentioned in message
 }
 
 // Reaction represents a message reaction
@@ -174,6 +175,11 @@ func ToMessage(m discord.Message, roles []discord.RoleID) Message {
 		}
 	}
 
+	mentions := make([]string, len(m.Mentions))
+	for i, u := range m.Mentions {
+		mentions[i] = u.ID.String()
+	}
+
 	msg := Message{
 		ID:          m.ID.String(),
 		ChannelID:   m.ChannelID.String(),
@@ -184,6 +190,7 @@ func ToMessage(m discord.Message, roles []discord.RoleID) Message {
 		Attachments: attachments,
 		Embeds:      len(m.Embeds),
 		Reactions:   reactions,
+		Mentions:    mentions,
 	}
 
 	if m.EditedTimestamp.IsValid() {

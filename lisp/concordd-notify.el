@@ -72,6 +72,9 @@ Each element is a plist with :channel-id, :channel-name, :guild-id, :count, :men
 (defvar concordd-notify--total-mentions 0
   "Total number of mentions.")
 
+(defvar concordd-notify--current-user-id nil
+  "Current Discord user ID.")
+
 ;;; Core functions
 
 (defun concordd-notify--should-track-p (guild-id channel-id)
@@ -137,17 +140,29 @@ MENTIONED is non-nil if user was mentioned."
   (let* ((msg (plist-get params :message))
          (channel-id (plist-get msg :channelId))
          (guild-id (plist-get msg :guildId))
-         (mentioned (plist-get msg :mentioned))
-         (channel-name (or (plist-get msg :channelName) "Unknown")))
+         (author (plist-get msg :author))
+         (author-id (plist-get author :id))
+         (mentions (plist-get msg :mentions))
+         (channel-name (or (plist-get params :channelName) "Unknown")))
     
-    ;; Only track if configured to do so
-    (when (concordd-notify--should-track-p guild-id channel-id)
-      ;; If mentions-only mode, skip non-mentions
-      (unless (and concordd-notify-mentions-only (not mentioned))
-        (concordd-notify--add-or-update-channel
-         channel-id channel-name guild-id mentioned)
-        (concordd-notify--recalculate-totals)
-        (force-mode-line-update t)))))
+    ;; Ignore messages sent by current user
+    (when (and concordd-notify--current-user-id
+               (string= author-id concordd-notify--current-user-id))
+      (cl-return-from concordd-notify--handle-message-created))
+    
+    ;; Check if current user is mentioned
+    (let ((mentioned (and concordd-notify--current-user-id
+                          mentions
+                          (member concordd-notify--current-user-id mentions))))
+      
+      ;; Only track if configured to do so
+      (when (concordd-notify--should-track-p guild-id channel-id)
+        ;; If mentions-only mode, skip non-mentions
+        (unless (and concordd-notify-mentions-only (not mentioned))
+          (concordd-notify--add-or-update-channel
+           channel-id channel-name guild-id mentioned)
+          (concordd-notify--recalculate-totals)
+          (force-mode-line-update t))))))
 
 (defun concordd-notify-clear-channel (channel-id)
   "Clear notifications for CHANNEL-ID."
@@ -235,6 +250,20 @@ When enabled, tracks unread messages and displays them in the modeline."
   :lighter nil
   (if concordd-notify-mode
       (progn
+        ;; Get current user ID if connected, otherwise defer until connection
+        (if (concordd-connected-p)
+            (concordd-get-current-user
+             (lambda (result)
+               (setq concordd-notify--current-user-id (plist-get result :id))))
+          ;; Register a one-time hook to fetch user ID after connection
+          (defun concordd-notify--fetch-user-id ()
+            "Fetch current user ID after connection."
+            (concordd-get-current-user
+             (lambda (result)
+               (setq concordd-notify--current-user-id (plist-get result :id))))
+            (remove-hook 'concordd-after-connect-hook #'concordd-notify--fetch-user-id))
+          (add-hook 'concordd-after-connect-hook #'concordd-notify--fetch-user-id))
+        
         ;; Register event handler
         (concordd-on 'messageCreated #'concordd-notify--handle-message-created)
         
@@ -256,6 +285,7 @@ When enabled, tracks unread messages and displays them in the modeline."
           (remove '(:eval (concordd-notify-modeline-segment))
                   mode-line-misc-info))
     (concordd-notify-clear-all)
+    (setq concordd-notify--current-user-id nil)
     (message "Concordd notification tracking disabled")))
 
 (provide 'concordd-notify)

@@ -25,6 +25,7 @@ func NewHandler() *Handler {
 
 	// Register default methods
 	h.RegisterMethod("ping", h.handlePing)
+	h.RegisterMethod("getCurrentUser", h.handleGetCurrentUser)
 
 	return h
 }
@@ -78,6 +79,23 @@ func (h *Handler) handlePing(params json.RawMessage) (interface{}, error) {
 	return map[string]interface{}{
 		"status":    "ok",
 		"timestamp": time.Now().Format(time.RFC3339),
+	}, nil
+}
+
+// handleGetCurrentUser handles the getCurrentUser method
+func (h *Handler) handleGetCurrentUser(params json.RawMessage) (interface{}, error) {
+	if h.discord == nil {
+		return nil, NewError(InternalError, "Discord client not initialized")
+	}
+	
+	userID := h.discord.currentUserID
+	
+	if !userID.IsValid() {
+		return nil, NewError(InternalError, "Current user not available yet")
+	}
+	
+	return map[string]interface{}{
+		"id": userID.String(),
 	}, nil
 }
 
