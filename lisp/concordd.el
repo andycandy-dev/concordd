@@ -59,7 +59,8 @@ If nil, assumes an external daemon is already running."
                  (string :tag "Discord token"))
   :group 'concordd)
 
-(defcustom concordd-socket-path "/tmp/concordd.sock"
+(defcustom concordd-socket-path 
+  (expand-file-name "concordd/concordd.sock" user-emacs-directory)
   "Path to the concordd daemon Unix socket.
 Used for both connecting to external daemons and managed daemons."
   :type 'string
@@ -194,7 +195,7 @@ Returns non-nil if daemon was started successfully."
            :command (list binary 
                          "start"
                          "--token" concordd-discord-token
-                         "--socket" concordd-socket-path)
+                         "--socket-path" concordd-socket-path)
            :connection-type 'pipe
            :sentinel #'concordd--process-sentinel))
     
