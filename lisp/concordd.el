@@ -51,9 +51,29 @@ v2 - New EWOC-based UI with incremental updates (recommended)"
                  (const :tag "EWOC-based (v2)" v2))
   :group 'concordd)
 
+(defcustom concordd-discord-token nil
+  "Discord bot token for concordd daemon.
+If set, concordd will start and manage its own daemon process.
+If nil, assumes an external daemon is already running."
+  :type '(choice (const :tag "Use external daemon" nil)
+                 (string :tag "Discord token"))
+  :group 'concordd)
+
 (defcustom concordd-socket-path "/tmp/concordd.sock"
-  "Path to the concordd daemon Unix socket."
+  "Path to the concordd daemon Unix socket.
+Used for both connecting to external daemons and managed daemons."
   :type 'string
+  :group 'concordd)
+
+(defcustom concordd-binary-path nil
+  "Path to concordd binary.
+Can be either:
+- A local file path: \"/usr/local/bin/concordd\"
+- A download URL: \"https://example.com/concordd-linux-amd64\"
+- nil: Find in PATH using `executable-find'"
+  :type '(choice (const :tag "Find in PATH" nil)
+                 (file :tag "Local file path")
+                 (string :tag "Download URL"))
   :group 'concordd)
 
 (defcustom concordd-log-messages nil
@@ -64,15 +84,142 @@ v2 - New EWOC-based UI with incremental updates (recommended)"
 (defvar concordd-after-connect-hook nil
   "Hook run after successfully connecting to concordd daemon.")
 
+(defvar concordd--process nil
+  "Process object for managed concordd daemon.")
+
+(defvar concordd--managing-daemon nil
+  "Non-nil if this Emacs session is managing the daemon lifecycle.")
+
+;;; Binary management
+
+(defun concordd--download-binary (url)
+  "Download concordd binary from URL and return path."
+  (let* ((binary-dir (expand-file-name "concordd/bin" user-emacs-directory))
+         (binary-name (if (eq system-type 'windows-nt) "concordd.exe" "concordd"))
+         (binary-path (expand-file-name binary-name binary-dir)))
+    (unless (file-exists-p binary-dir)
+      (make-directory binary-dir t))
+    (message "Downloading concordd binary from %s..." url)
+    (url-copy-file url binary-path t)
+    (unless (eq system-type 'windows-nt)
+      (set-file-modes binary-path #o755))
+    (message "Downloaded concordd binary to %s" binary-path)
+    binary-path))
+
+(defun concordd--ensure-binary ()
+  "Ensure concordd binary exists.
+Returns path to binary or signals error if not found."
+  (cond
+   ;; Local file path
+   ((and concordd-binary-path
+         (not (string-prefix-p "http" concordd-binary-path)))
+    (if (file-exists-p concordd-binary-path)
+        concordd-binary-path
+      (error "Binary not found at: %s" concordd-binary-path)))
+   
+   ;; Download URL
+   ((and concordd-binary-path
+         (string-prefix-p "http" concordd-binary-path))
+    (let ((cached-path (expand-file-name 
+                        (if (eq system-type 'windows-nt)
+                            "concordd/bin/concordd.exe"
+                          "concordd/bin/concordd")
+                        user-emacs-directory)))
+      (if (file-exists-p cached-path)
+          cached-path
+        (concordd--download-binary concordd-binary-path))))
+   
+   ;; Find in PATH
+   (t
+    (or (executable-find "concordd")
+        (error "Concordd binary not found in PATH. Set `concordd-binary-path' to a local path or download URL")))))
+
+;;; Daemon lifecycle management
+
+(defun concordd--start-daemon ()
+  "Start concordd daemon process.
+Returns non-nil if daemon was started successfully."
+  (when concordd--process
+    (error "Daemon process already running"))
+  
+  (unless concordd-discord-token
+    (error "concordd-discord-token must be set to start managed daemon"))
+  
+  (let ((binary (concordd--ensure-binary)))
+    (unless binary
+      (error "Could not find or download concordd binary"))
+    
+    ;; Clean up existing socket
+    (when (file-exists-p concordd-socket-path)
+      (delete-file concordd-socket-path))
+    
+    (message "Starting concordd daemon...")
+    (setq concordd--process
+          (make-process
+           :name "concordd"
+           :buffer "*concordd*"
+           :command (list binary 
+                         "--token" concordd-discord-token
+                         "--socket" concordd-socket-path)
+           :connection-type 'pipe
+           :sentinel #'concordd--process-sentinel))
+    
+    (setq concordd--managing-daemon t)
+    (set-process-query-on-exit-flag concordd--process nil)
+    
+    ;; Wait for socket to be created
+    (let ((max-wait 10)
+          (waited 0))
+      (while (and (< waited max-wait)
+                  (not (file-exists-p concordd-socket-path)))
+        (sleep-for 0.5)
+        (setq waited (+ waited 0.5)))
+      
+      (if (file-exists-p concordd-socket-path)
+          (progn
+            (message "Concordd daemon started")
+            t)
+        (concordd--stop-daemon)
+        (error "Daemon failed to create socket within %d seconds" max-wait)))))
+
+(defun concordd--stop-daemon ()
+  "Stop managed concordd daemon process."
+  (when concordd--process
+    (when (process-live-p concordd--process)
+      (kill-process concordd--process))
+    (setq concordd--process nil
+          concordd--managing-daemon nil)
+    (when (file-exists-p concordd-socket-path)
+      (ignore-errors (delete-file concordd-socket-path)))
+    (message "Concordd daemon stopped")))
+
+(defun concordd--process-sentinel (process event)
+  "Sentinel for concordd daemon PROCESS.
+EVENT describes the process state change."
+  (unless (process-live-p process)
+    (message "Concordd daemon exited: %s" (string-trim event))
+    (setq concordd--process nil
+          concordd--managing-daemon nil)))
+
 ;;; Connection management
 
 ;;;###autoload
 (defun concordd-connect (&optional socket-path)
   "Connect to the concordd daemon.
+If `concordd-discord-token' is set and no external daemon is found,
+automatically starts and manages a daemon process.
 Optional SOCKET-PATH overrides `concordd-socket-path'."
   (interactive)
   (let ((path (or socket-path concordd-socket-path)))
+    ;; If token is set and socket doesn't exist, start daemon
+    (when (and concordd-discord-token
+               (not (file-exists-p path))
+               (not concordd--managing-daemon))
+      (concordd--start-daemon))
+    
+    ;; Connect to daemon (external or managed)
     (concordd-ipc-connect path)
+    
     ;; Test connection with ping
     (concordd-ping
      (lambda (result)
@@ -80,9 +227,12 @@ Optional SOCKET-PATH overrides `concordd-socket-path'."
        (run-hooks 'concordd-after-connect-hook)))))
 
 (defun concordd-disconnect ()
-  "Disconnect from the concordd daemon."
+  "Disconnect from the concordd daemon.
+If managing the daemon, also stops it."
   (interactive)
-  (concordd-ipc-disconnect))
+  (concordd-ipc-disconnect)
+  (when concordd--managing-daemon
+    (concordd--stop-daemon)))
 
 (defun concordd-connected-p ()
   "Return non-nil if connected to the daemon."
@@ -361,6 +511,15 @@ CALLBACK is called with result containing :tags list."
                nil))
              (_ (user-error "Invalid concordd-ui-implementation: %s" 
                            concordd-ui-implementation)))))))))
+
+;;; Cleanup
+
+(defun concordd--cleanup ()
+  "Clean up concordd resources on Emacs exit."
+  (when concordd--managing-daemon
+    (concordd--stop-daemon)))
+
+(add-hook 'kill-emacs-hook #'concordd--cleanup)
 
 (provide 'concordd)
 
