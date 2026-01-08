@@ -14,6 +14,7 @@
 ;; - Queue-based navigation through unread channels
 ;; - Modeline integration with click-to-navigate
 ;; - Automatic clearing when channels are opened
+;; - Syncs with Discord's read state (channels marked as read elsewhere are cleared)
 ;;
 ;; Usage:
 ;;   (require 'concordd-notify)
@@ -164,6 +165,26 @@ MENTIONED is non-nil if user was mentioned."
           (concordd-notify--recalculate-totals)
           (force-mode-line-update t))))))
 
+(defun concordd-notify--handle-read-state-updated (params)
+  "Handle readStateUpdated event with PARAMS.
+When a channel is marked as read, update or remove from notification queue."
+  (let* ((channel-id (plist-get params :channelId))
+         (mention-count (plist-get params :mentionCount))
+         (found (concordd-notify--find-channel-in-queue channel-id)))
+    (when found
+      (if (and (zerop mention-count))
+          ;; No mentions left, remove channel from queue entirely
+          (progn
+            (setq concordd-notify--channel-queue
+                  (delq (car found) concordd-notify--channel-queue))
+            (concordd-notify--recalculate-totals)
+            (force-mode-line-update t))
+        ;; Update mention count but keep channel in queue
+        (let ((entry (car found)))
+          (plist-put entry :mentions mention-count)
+          (concordd-notify--recalculate-totals)
+          (force-mode-line-update t))))))
+
 (defun concordd-notify-clear-channel (channel-id)
   "Clear notifications for CHANNEL-ID."
   (let ((found (concordd-notify--find-channel-in-queue channel-id)))
@@ -261,8 +282,9 @@ When enabled, tracks unread messages and displays them in the modeline."
           (remove-hook 'concordd-after-connect-hook #'concordd-notify--fetch-user-id))
         (add-hook 'concordd-after-connect-hook #'concordd-notify--fetch-user-id)
         
-        ;; Register event handler
+        ;; Register event handlers
         (concordd-on 'messageCreated #'concordd-notify--handle-message-created)
+        (concordd-on 'readStateUpdated #'concordd-notify--handle-read-state-updated)
         
         ;; Add auto-clear advice
         (advice-add 'concordd-ui-v2-open-channel :before
@@ -277,6 +299,7 @@ When enabled, tracks unread messages and displays them in the modeline."
     
     ;; Disable
     (concordd-off 'messageCreated #'concordd-notify--handle-message-created)
+    (concordd-off 'readStateUpdated #'concordd-notify--handle-read-state-updated)
     (advice-remove 'concordd-ui-v2-open-channel #'concordd-notify--auto-clear-channel)
     (setq mode-line-misc-info
           (remove '(:eval (concordd-notify-modeline-segment))

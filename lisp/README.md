@@ -362,6 +362,7 @@ The `concordd-notify` package provides intelligent notification tracking with mo
 - **Smart counting**: Tracks multiple messages per channel correctly
 - **Mention highlighting**: Shows mention count with `@` prefix in urgent color
 - **Auto-clear**: Automatically clears notifications when you open a channel
+- **Read state sync**: Automatically updates when channels are marked as read in Discord or other clients
 - **Configurable tracking**: Track specific guilds, channels, or DMs
 
 ### Modeline Display
