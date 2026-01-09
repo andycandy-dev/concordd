@@ -31,6 +31,7 @@
 (declare-function concordd-list-channels "concordd")
 (declare-function concordd-get-guild-members "concordd")
 (declare-function concordd-get-guild-roles "concordd")
+(declare-function concordd-mark-as-read "concordd")
 
 ;; Load format module when available
 (require 'concordd-format nil t)
@@ -145,6 +146,16 @@ Uses EWOC for efficient message display and incremental updates.
   (setf (concordd-message-state msg)
         (list :guild-id guild-id :prev-author-id prev-author-id)))
 
+(defun concordd-ui-v2-mark-channel-read (channel-id messages)
+  "Mark CHANNEL-ID as read up to the last message in MESSAGES.
+This is a reusable helper that can be called after displaying messages."
+  (when-let ((last-msg (car (last messages))))
+    (let ((last-id (if (concordd-message-p last-msg)
+                       (concordd-message-id last-msg)
+                     (plist-get last-msg :id))))
+      (when last-id
+        (concordd-mark-as-read channel-id last-id)))))
+
 ;;; Message loading
 
 (defun concordd-ui-v2--load-guild-cache (guild-id)
@@ -171,16 +182,20 @@ Uses EWOC for efficient message display and incremental updates.
   (when-let ((buf (concordd-ui-v2--find-channel-buffer channel-id)))
     (with-current-buffer buf
       (let ((inhibit-read-only t)
-            (prev-author-id nil))
+            (prev-author-id nil)
+            (msg-objects '()))
         (dolist (msg-plist (reverse messages))
           (let ((msg (concordd-message-from-plist msg-plist)))
             (concordd-ui-v2--set-message-state msg concordd-ui-v2-guild-id prev-author-id)
             (ewoc-enter-last concordd-message-ewoc msg)
+            (push msg msg-objects)
             (setq prev-author-id (plist-get (concordd-message-author msg) :id))
             (when (or (null concordd-ui-v2-oldest-message-id)
                       (string< (concordd-message-id msg) concordd-ui-v2-oldest-message-id))
               (setq concordd-ui-v2-oldest-message-id (concordd-message-id msg)))))
-        (goto-char (point-max))))))
+        (goto-char (point-max))
+        ;; Mark channel as read
+        (concordd-ui-v2-mark-channel-read channel-id (nreverse msg-objects))))))
 
 (defun concordd-ui-v2-load-older ()
   "Load older messages in current channel."
