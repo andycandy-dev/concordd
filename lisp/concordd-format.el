@@ -153,21 +153,20 @@ This should be called AFTER markdown-view-mode has processed the buffer."
 
 ;;; Cache management
 
+(defun concordd-format--ensure-hash-table (table-sym)
+  "Ensure TABLE-SYM is a hash table, initializing if needed."
+  (unless (symbol-value table-sym)
+    (set table-sym (make-hash-table :test 'equal))))
+
 (defun concordd-format-set-guild-cache (guild-id members roles channels)
-  "Set cache for GUILD-ID with MEMBERS, ROLES, and CHANNELS."
-  (unless concordd-format-guild-members
-    (setq concordd-format-guild-members (make-hash-table :test 'equal)))
-  (unless concordd-format-guild-roles
-    (setq concordd-format-guild-roles (make-hash-table :test 'equal)))
-  (unless concordd-format-channels
-    (setq concordd-format-channels (make-hash-table :test 'equal)))
-  
-  (when members
-    (puthash guild-id members concordd-format-guild-members))
-  (when roles
-    (puthash guild-id roles concordd-format-guild-roles))
-  (when channels
-    (puthash guild-id channels concordd-format-channels)))
+  "Set cache for GUILD-ID with MEMBERS, ROLES, and CHANNELS.
+Only non-nil values are stored."
+  (dolist (entry `((concordd-format-guild-members . ,members)
+                   (concordd-format-guild-roles . ,roles)
+                   (concordd-format-channels . ,channels)))
+    (when (cdr entry)
+      (concordd-format--ensure-hash-table (car entry))
+      (puthash guild-id (cdr entry) (symbol-value (car entry))))))
 
 (provide 'concordd-format)
 ;;; concordd-format.el ends here

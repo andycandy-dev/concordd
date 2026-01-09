@@ -97,107 +97,80 @@ Fields:
   (or (plist-get author :username)
       "Unknown"))
 
+(defun concordd-message--insert-header (username timestamp edited thread-id)
+  "Insert message header with USERNAME, TIMESTAMP, EDITED marker, and THREAD-ID indicator."
+  (let ((ts-str (concordd-message--format-timestamp timestamp))
+        (author-str (propertize username 'face '(:weight bold :foreground "#5865F2"))))
+    (if (eq concordd-message-timestamp-align 'right)
+        (concordd-message--insert-header-right author-str ts-str edited thread-id)
+      (concordd-message--insert-header-left author-str ts-str edited thread-id))
+    (insert "\n")))
+
+(defun concordd-message--insert-header-right (author-str ts-str edited thread-id)
+  "Insert right-aligned header with AUTHOR-STR, TS-STR, EDITED, THREAD-ID."
+  (let* ((parts (list author-str))
+         (_ (when edited (push (propertize " (edited)" 'face 'italic) parts)))
+         (_ (when thread-id
+              (push (propertize " 🧵" 'face 'shadow 'help-echo "This message has a thread") parts)))
+         (line-content (apply #'concat (nreverse parts)))
+         (padding (max 1 (- (window-width) (string-width line-content) (string-width ts-str) 2))))
+    (insert line-content)
+    (insert (propertize (make-string padding ?\s) 'face 'shadow))
+    (insert (propertize ts-str 'face 'shadow))))
+
+(defun concordd-message--insert-header-left (author-str ts-str edited thread-id)
+  "Insert left-aligned header with AUTHOR-STR, TS-STR, EDITED, THREAD-ID."
+  (insert (propertize ts-str 'face 'shadow) " " author-str)
+  (when edited (insert (propertize " (edited)" 'face 'italic)))
+  (when thread-id
+    (insert (propertize " 🧵" 'face 'shadow 'help-echo "This message has a thread"))))
+
+(defun concordd-message--insert-content (content guild-id)
+  "Insert message CONTENT with mention processing for GUILD-ID."
+  (when (and content (> (length content) 0))
+    (let ((content-start (point))
+          (processed (if (fboundp 'concordd-format-preprocess-mentions)
+                         (concordd-format-preprocess-mentions content guild-id)
+                       content)))
+      (insert (if (featurep 'markdown-mode)
+                  (string-trim (concordd-message--render-markdown processed))
+                processed))
+      (when (fboundp 'concordd-format-postprocess-mentions)
+        (save-excursion
+          (save-restriction
+            (narrow-to-region content-start (point))
+            (concordd-format-postprocess-mentions guild-id)))))))
+
 (defun concordd-message--format (message)
-  "Pretty-printer function to format MESSAGE for ewoc display.
-This is called by ewoc whenever a message node needs to be rendered."
+  "Pretty-printer function to format MESSAGE for ewoc display."
   (condition-case err
       (let* ((author (concordd-message-author message))
-             (username (concordd-message--format-author author))
              (author-id (plist-get author :id))
-             (content (concordd-message-content message))
-             (timestamp (concordd-message-timestamp message))
+             (state (concordd-message-state message))
              (edited (concordd-message-edited-timestamp message))
              (reactions (concordd-message-reactions message))
              (thread-id (concordd-message-thread-id message))
-             (guild-id (plist-get (concordd-message-state message) :guild-id))
-             (prev-author-id (plist-get (concordd-message-state message) :prev-author-id))
              (start-pos (point))
-             ;; Always show header if message has reactions, thread, or is edited
-             ;; This ensures important metadata is never hidden by grouping
-             (force-header (or reactions thread-id edited))
-             (show-header (or force-header
+             (show-header (or edited reactions thread-id
                              (not concordd-message-group-by-author)
-                             (not (equal author-id prev-author-id)))))
-        
-        ;; Insert header (timestamp + author) if needed
+                             (not (equal author-id (plist-get state :prev-author-id))))))
         (when show-header
-          (let ((ts-str (concordd-message--format-timestamp timestamp))
-                (author-str (propertize username
-                                       'face '(:weight bold :foreground "#5865F2"))))
-            (if (eq concordd-message-timestamp-align 'right)
-                ;; Right-aligned timestamp
-                (let* ((line-parts (list author-str))
-                       ;; Add edited marker
-                       (_ (when edited
-                            (push (propertize " (edited)" 'face 'italic) line-parts)))
-                       ;; Add thread indicator
-                       (_ (when thread-id
-                            (push (propertize " 🧵" 'face 'shadow
-                                            'help-echo "This message has a thread")
-                                  line-parts)))
-                       (line-content (apply #'concat (nreverse line-parts)))
-                       (content-width (string-width line-content))
-                       (ts-width (string-width ts-str))
-                       (window-width (window-width))
-                       (padding (max 1 (- window-width content-width ts-width 2))))
-                  (insert line-content)
-                  (insert (propertize (make-string padding ?\s) 'face 'shadow))
-                  (insert (propertize ts-str 'face 'shadow)))
-              ;; Left-aligned timestamp
-              (insert (propertize ts-str 'face 'shadow))
-              (insert " ")
-              (insert author-str)
-              (when edited
-                (insert (propertize " (edited)" 'face 'italic)))
-              (when thread-id
-                (insert (propertize " 🧵" 'face 'shadow
-                                   'help-echo "This message has a thread"))))
-            (insert "\n")))
-        
-        ;; Insert message content
-        (when (and content (> (length content) 0))
-          (let ((content-start (point)))
-            ;; Pre-process mentions if concordd-format is loaded
-            (let ((processed-content 
-                   (if (fboundp 'concordd-format-preprocess-mentions)
-                       (concordd-format-preprocess-mentions content guild-id)
-                     content)))
-              ;; Insert content in a temporary markdown-view-mode buffer to get formatting
-              (if (featurep 'markdown-mode)
-                  (let ((formatted (concordd-message--render-markdown processed-content)))
-                    ;; Trim any leading/trailing whitespace from markdown output
-                    (setq formatted (string-trim formatted))
-                    (insert formatted))
-                ;; Fallback: just insert plain text
-                (insert processed-content)))
-            
-            ;; Post-process: add mention faces if concordd-format is loaded
-            (when (fboundp 'concordd-format-postprocess-mentions)
-              (save-excursion
-                (save-restriction
-                  (narrow-to-region content-start (point))
-                  (concordd-format-postprocess-mentions guild-id))))))
-        
-        ;; Insert reactions if present (always on their own line)
+          (concordd-message--insert-header
+           (concordd-message--format-author author)
+           (concordd-message-timestamp message)
+           edited thread-id))
+        (concordd-message--insert-content
+         (concordd-message-content message)
+         (plist-get state :guild-id))
         (when reactions
-          (insert "\n")
-          (insert (concordd-message--format-reactions reactions)))
-        
+          (insert "\n" (concordd-message--format-reactions reactions)))
         (insert "\n")
-        
-        ;; Store message ID and author ID as text properties
-        (put-text-property start-pos (point)
-                          'concordd-message-id (concordd-message-id message))
-        (put-text-property start-pos (point)
-                          'concordd-author-id author-id))
-    
+        (put-text-property start-pos (point) 'concordd-message-id (concordd-message-id message))
+        (put-text-property start-pos (point) 'concordd-author-id author-id))
     (error
-     ;; Graceful error handling: display error and raw data
-     (insert (propertize
-              (format "[Error rendering message: %s]\n%S\n"
-                      (error-message-string err)
-                      message)
-              'face 'error)))))
+     (insert (propertize (format "[Error rendering message: %s]\n%S\n"
+                                 (error-message-string err) message)
+                         'face 'error)))))
 
 (defun concordd-message--render-markdown (content)
   "Render CONTENT using markdown-view-mode.

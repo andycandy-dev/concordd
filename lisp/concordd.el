@@ -93,52 +93,53 @@ Can be either:
 
 ;;; Binary management
 
+(defun concordd--binary-dir ()
+  "Return the directory for concordd binary."
+  (expand-file-name "concordd/bin" user-emacs-directory))
+
+(defun concordd--binary-name ()
+  "Return the concordd binary name for current platform."
+  (if (eq system-type 'windows-nt) "concordd.exe" "concordd"))
+
 (defun concordd--download-binary (url)
   "Download concordd binary from URL and return path."
-  (let* ((binary-dir (expand-file-name "concordd/bin" user-emacs-directory))
-         (binary-name (if (eq system-type 'windows-nt) "concordd.exe" "concordd"))
-         (binary-path (expand-file-name binary-name binary-dir))
-         (is-archive (or (string-suffix-p ".tar.gz" url)
-                        (string-suffix-p ".zip" url)))
-         (archive-path (expand-file-name 
-                        (if (string-suffix-p ".zip" url) "concordd.zip" "concordd.tar.gz")
-                        binary-dir)))
-    (unless (file-exists-p binary-dir)
-      (make-directory binary-dir t))
-    
+  (let* ((binary-dir (concordd--binary-dir))
+         (binary-path (expand-file-name (concordd--binary-name) binary-dir))
+         (is-zip (string-suffix-p ".zip" url))
+         (is-archive (or is-zip (string-suffix-p ".tar.gz" url))))
+    (make-directory binary-dir t)
     (if is-archive
-        (progn
-          ;; Download archive
-          (message "Downloading concordd archive from %s..." url)
-          (url-copy-file url archive-path t)
-          
-          ;; Extract
-          (message "Extracting archive...")
-          (if (string-suffix-p ".zip" url)
-              ;; Extract ZIP (Windows)
-              (let ((default-directory binary-dir))
-                (call-process "unzip" nil nil nil "-o" archive-path))
-            ;; Extract tar.gz (Unix)
-            (let ((default-directory binary-dir))
-              (call-process "tar" nil nil nil "xzf" archive-path)))
-          
-          ;; Clean up archive
-          (delete-file archive-path)
-          
-          ;; Set executable permissions on Unix
-          (unless (eq system-type 'windows-nt)
-            (set-file-modes binary-path #o755))
-          
-          (message "Extracted concordd binary to %s" binary-path))
-      
-      ;; Direct binary download (legacy support)
-      (message "Downloading concordd binary from %s..." url)
-      (url-copy-file url binary-path t)
-      (unless (eq system-type 'windows-nt)
-        (set-file-modes binary-path #o755))
-      (message "Downloaded concordd binary to %s" binary-path))
-    
+        (concordd--download-and-extract-archive url binary-dir binary-path is-zip)
+      (concordd--download-direct-binary url binary-path))
     binary-path))
+
+(defun concordd--download-and-extract-archive (url binary-dir binary-path is-zip)
+  "Download archive from URL to BINARY-DIR, extract to BINARY-PATH.
+IS-ZIP determines whether to use unzip or tar."
+  (let ((archive-path (expand-file-name (if is-zip "concordd.zip" "concordd.tar.gz")
+                                         binary-dir)))
+    (message "Downloading concordd archive from %s..." url)
+    (url-copy-file url archive-path t)
+    (message "Extracting archive...")
+    (let ((default-directory binary-dir))
+      (if is-zip
+          (call-process "unzip" nil nil nil "-o" archive-path)
+        (call-process "tar" nil nil nil "xzf" archive-path)))
+    (delete-file archive-path)
+    (concordd--set-executable-if-unix binary-path)
+    (message "Extracted concordd binary to %s" binary-path)))
+
+(defun concordd--download-direct-binary (url binary-path)
+  "Download binary directly from URL to BINARY-PATH."
+  (message "Downloading concordd binary from %s..." url)
+  (url-copy-file url binary-path t)
+  (concordd--set-executable-if-unix binary-path)
+  (message "Downloaded concordd binary to %s" binary-path))
+
+(defun concordd--set-executable-if-unix (path)
+  "Set executable permissions on PATH if not on Windows."
+  (unless (eq system-type 'windows-nt)
+    (set-file-modes path #o755)))
 
 (defun concordd--ensure-binary ()
   "Ensure concordd binary exists.

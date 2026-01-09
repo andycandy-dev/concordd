@@ -61,6 +61,14 @@
 (defvar-local concordd-ui-editing-message-id nil
   "Message ID being edited, if any.")
 
+(defun concordd-ui--find-channel-buffer (channel-id)
+  "Find buffer for CHANNEL-ID in channel mode."
+  (cl-find-if (lambda (b)
+                (with-current-buffer b
+                  (and (eq major-mode 'concordd-ui-channel-mode)
+                       (string= concordd-ui-channel-id channel-id))))
+              (buffer-list)))
+
 ;;; Channel type handling
 
 (defvar concordd-ui-channel-type-info
@@ -264,12 +272,7 @@ Re-renders all messages to resolve any pending mentions."
 (defun concordd-ui-display-messages (channel-id messages &optional keep-position)
   "Display MESSAGES for CHANNEL-ID in current buffer.
 If KEEP-POSITION is non-nil, try to maintain cursor position."
-  (let ((buf (cl-find-if
-              (lambda (b)
-                (with-current-buffer b
-                  (and (eq major-mode 'concordd-ui-channel-mode)
-                       (string= concordd-ui-channel-id channel-id))))
-              (buffer-list))))
+  (let ((buf (concordd-ui--find-channel-buffer channel-id)))
     (when buf
       (with-current-buffer buf
         ;; Request missing guild members before displaying
@@ -301,12 +304,7 @@ If KEEP-POSITION is non-nil, try to maintain cursor position."
 
 (defun concordd-ui-prepend-messages (channel-id messages)
   "Prepend MESSAGES to CHANNEL-ID buffer (for pagination)."
-  (let ((buf (cl-find-if
-              (lambda (b)
-                (with-current-buffer b
-                  (and (eq major-mode 'concordd-ui-channel-mode)
-                       (string= concordd-ui-channel-id channel-id))))
-              (buffer-list))))
+  (let ((buf (concordd-ui--find-channel-buffer channel-id)))
     (when buf
       (with-current-buffer buf
         (let ((inhibit-read-only t))

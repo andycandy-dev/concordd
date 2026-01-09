@@ -211,6 +211,13 @@
     (when-let ((data (cdr (assoc cand concordd-consult--channels-cache-alist))))
       (= (plist-get data :type) type))))
 
+(defun concordd-consult--open-channel (channel-id channel-name channel-type guild-id)
+  "Open CHANNEL-ID with CHANNEL-NAME of CHANNEL-TYPE in GUILD-ID."
+  (pcase channel-type
+    (15 (consult-concordd-forum-thread channel-id channel-name guild-id))
+    (_ (require 'concordd-ui-v2)
+       (concordd-ui-v2-open-channel channel-id channel-name guild-id))))
+
 ;;;###autoload
 (defun consult-concordd-channel (&optional guild-id)
   "Select a Discord channel using consult.
@@ -245,13 +252,8 @@ Otherwise, prompt for guild first."
                          (channel-name (plist-get selected :name))
                          (channel-type (plist-get selected :type)))
                      (message "Selected channel: %s (type %s)" channel-name channel-type)
-                     ;; Route based on channel type
-                     (pcase channel-type
-                       (15 (consult-concordd-forum-thread channel-id channel-name guild-id))
-                       (_ (require 'concordd-ui-v2)
-                          (concordd-ui-v2-open-channel channel-id channel-name guild-id)))))))))))
-    ;; No guild-id provided, prompt for guild first
-    (consult-concordd-guild)))
+                     (concordd-consult--open-channel channel-id channel-name channel-type guild-id))))))))
+    (consult-concordd-guild))))
 
 ;;; Forum Thread Selection
 
@@ -424,12 +426,7 @@ This is like `consult-concordd-channel' but sorted by last message time."
                    (let ((channel-id (plist-get selected :id))
                          (channel-name (plist-get selected :name))
                          (channel-type (plist-get selected :type)))
-                     ;; Route based on channel type
-                     (pcase channel-type
-                       (15 (consult-concordd-forum-thread channel-id channel-name guild-id))
-                       (_ (require 'concordd-ui-v2)
-                          (concordd-ui-v2-open-channel channel-id channel-name guild-id)))))))))))
-    ;; No guild-id provided, prompt for guild first
+                     (concordd-consult--open-channel channel-id channel-name channel-type guild-id))))))))
     (concordd-list-guilds
      (lambda (result)
        (let* ((guilds (plist-get result :guilds))
@@ -443,7 +440,7 @@ This is like `consult-concordd-channel' but sorted by last message time."
                       :require-match t
                       :lookup #'consult--lookup-cdr)))
          (when guild
-           (consult-concordd-activity (plist-get guild :id))))))))
+           (consult-concordd-activity (plist-get guild :id)))))))))
 
 ;;; Embark Integration
 

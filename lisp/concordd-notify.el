@@ -25,6 +25,7 @@
 ;;; Code:
 
 (require 'concordd)
+(require 'cl-lib)
 
 ;;; Customization
 
@@ -96,13 +97,10 @@ Each element is a plist with :channel-id, :channel-name, :guild-id, :count, :men
 (defun concordd-notify--find-channel-in-queue (channel-id)
   "Find channel entry in queue by CHANNEL-ID.
 Returns cons of (entry . position) or nil if not found."
-  (let ((pos 0)
-        (found nil))
-    (dolist (entry concordd-notify--channel-queue)
-      (when (string= (plist-get entry :channel-id) channel-id)
-        (setq found (cons entry pos)))
-      (setq pos (1+ pos)))
-    found))
+  (when-let ((entry (seq-find (lambda (e)
+                                 (string= (plist-get e :channel-id) channel-id))
+                               concordd-notify--channel-queue)))
+    (cons entry (cl-position entry concordd-notify--channel-queue))))
 
 (defun concordd-notify--add-or-update-channel (channel-id channel-name guild-id mentioned)
   "Add or update channel in notification queue.
@@ -128,13 +126,14 @@ MENTIONED is non-nil if user was mentioned."
 
 (defun concordd-notify--recalculate-totals ()
   "Recalculate total unread and mention counts from queue."
-  (setq concordd-notify--total-unread 0
-        concordd-notify--total-mentions 0)
-  (dolist (entry concordd-notify--channel-queue)
-    (setq concordd-notify--total-unread
-          (+ concordd-notify--total-unread (plist-get entry :count)))
-    (setq concordd-notify--total-mentions
-          (+ concordd-notify--total-mentions (plist-get entry :mentions)))))
+  (setq concordd-notify--total-unread
+        (cl-reduce #'+ concordd-notify--channel-queue
+                   :key (lambda (e) (plist-get e :count))
+                   :initial-value 0)
+        concordd-notify--total-mentions
+        (cl-reduce #'+ concordd-notify--channel-queue
+                   :key (lambda (e) (plist-get e :mentions))
+                   :initial-value 0)))
 
 (defun concordd-notify--handle-message-created (params)
   "Handle messageCreated event with PARAMS."
@@ -172,29 +171,22 @@ When a channel is marked as read, update or remove from notification queue."
          (mention-count (plist-get params :mentionCount))
          (found (concordd-notify--find-channel-in-queue channel-id)))
     (when found
-      (if (and (zerop mention-count))
+      (if (zerop mention-count)
           ;; No mentions left, remove channel from queue entirely
-          (progn
-            (setq concordd-notify--channel-queue
-                  (delq (car found) concordd-notify--channel-queue))
-            (concordd-notify--recalculate-totals)
-            (force-mode-line-update t))
+          (setq concordd-notify--channel-queue
+                (delq (car found) concordd-notify--channel-queue))
         ;; Update mention count but keep channel in queue
-        (let ((entry (car found)))
-          (plist-put entry :mentions mention-count)
-          (concordd-notify--recalculate-totals)
-          (force-mode-line-update t))))))
+        (plist-put (car found) :mentions mention-count))
+      (concordd-notify--recalculate-totals)
+      (force-mode-line-update t))))
 
 (defun concordd-notify-clear-channel (channel-id)
   "Clear notifications for CHANNEL-ID."
-  (let ((found (concordd-notify--find-channel-in-queue channel-id)))
-    (when found
-      (let ((pos (cdr found)))
-        (setq concordd-notify--channel-queue
-              (append (seq-take concordd-notify--channel-queue pos)
-                      (seq-drop concordd-notify--channel-queue (1+ pos)))))
-      (concordd-notify--recalculate-totals)
-      (force-mode-line-update t))))
+  (when-let ((found (concordd-notify--find-channel-in-queue channel-id)))
+    (setq concordd-notify--channel-queue
+          (delq (car found) concordd-notify--channel-queue))
+    (concordd-notify--recalculate-totals)
+    (force-mode-line-update t)))
 
 (defun concordd-notify-clear-all ()
   "Clear all notifications."
@@ -262,6 +254,38 @@ ARGS should contain channel-id as first argument."
 
 ;;; Minor mode
 
+(defun concordd-notify--fetch-user-id ()
+  "Fetch current user ID after connection.
+Removes itself from `concordd-after-connect-hook' after running."
+  (run-with-timer 1 nil
+    (lambda ()
+      (concordd-get-current-user
+       (lambda (result)
+         (setq concordd-notify--current-user-id (plist-get result :id))))))
+  (remove-hook 'concordd-after-connect-hook #'concordd-notify--fetch-user-id))
+
+(defun concordd-notify--enable ()
+  "Enable notification tracking."
+  (add-hook 'concordd-after-connect-hook #'concordd-notify--fetch-user-id)
+  (concordd-on 'messageCreated #'concordd-notify--handle-message-created)
+  (concordd-on 'readStateUpdated #'concordd-notify--handle-read-state-updated)
+  (advice-add 'concordd-ui-v2-open-channel :before #'concordd-notify--auto-clear-channel)
+  (unless (featurep 'doom-modeline)
+    (add-to-list 'mode-line-misc-info '(:eval (concordd-notify-modeline-segment))))
+  (message "Concordd notification tracking enabled"))
+
+(defun concordd-notify--disable ()
+  "Disable notification tracking."
+  (remove-hook 'concordd-after-connect-hook #'concordd-notify--fetch-user-id)
+  (concordd-off 'messageCreated #'concordd-notify--handle-message-created)
+  (concordd-off 'readStateUpdated #'concordd-notify--handle-read-state-updated)
+  (advice-remove 'concordd-ui-v2-open-channel #'concordd-notify--auto-clear-channel)
+  (setq mode-line-misc-info
+        (remove '(:eval (concordd-notify-modeline-segment)) mode-line-misc-info))
+  (concordd-notify-clear-all)
+  (setq concordd-notify--current-user-id nil)
+  (message "Concordd notification tracking disabled"))
+
 ;;;###autoload
 (define-minor-mode concordd-notify-mode
   "Toggle Discord notification tracking.
@@ -270,43 +294,8 @@ When enabled, tracks unread messages and displays them in the modeline."
   :group 'concordd-notify
   :lighter nil
   (if concordd-notify-mode
-      (progn
-        ;; Register a hook to fetch user ID after connection
-        (defun concordd-notify--fetch-user-id ()
-          "Fetch current user ID after connection."
-          (run-with-timer 1 nil  ;; Wait 1 second for daemon Ready event
-            (lambda ()
-              (concordd-get-current-user
-               (lambda (result)
-                 (setq concordd-notify--current-user-id (plist-get result :id))))))
-          (remove-hook 'concordd-after-connect-hook #'concordd-notify--fetch-user-id))
-        (add-hook 'concordd-after-connect-hook #'concordd-notify--fetch-user-id)
-        
-        ;; Register event handlers
-        (concordd-on 'messageCreated #'concordd-notify--handle-message-created)
-        (concordd-on 'readStateUpdated #'concordd-notify--handle-read-state-updated)
-        
-        ;; Add auto-clear advice
-        (advice-add 'concordd-ui-v2-open-channel :before
-                    #'concordd-notify--auto-clear-channel)
-        
-        ;; Add to modeline (standard modeline only)
-        (unless (featurep 'doom-modeline)
-          (add-to-list 'mode-line-misc-info
-                       '(:eval (concordd-notify-modeline-segment))))
-        
-        (message "Concordd notification tracking enabled"))
-    
-    ;; Disable
-    (concordd-off 'messageCreated #'concordd-notify--handle-message-created)
-    (concordd-off 'readStateUpdated #'concordd-notify--handle-read-state-updated)
-    (advice-remove 'concordd-ui-v2-open-channel #'concordd-notify--auto-clear-channel)
-    (setq mode-line-misc-info
-          (remove '(:eval (concordd-notify-modeline-segment))
-                  mode-line-misc-info))
-    (concordd-notify-clear-all)
-    (setq concordd-notify--current-user-id nil)
-    (message "Concordd notification tracking disabled")))
+      (concordd-notify--enable)
+    (concordd-notify--disable)))
 
 (provide 'concordd-notify)
 ;;; concordd-notify.el ends here

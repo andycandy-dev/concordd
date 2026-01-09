@@ -18,29 +18,22 @@
 
 ;;; EWOC Utility Functions
 
-(defun concordd-ewoc-find-message (ewoc message-id)
-  "Find node in EWOC with MESSAGE-ID.
-Returns the first matching node, or nil if not found."
-  (catch 'found
-    (ewoc-map (lambda (data)
-                (when (and (concordd-message-p data)
-                          (string= (concordd-message-id data) message-id))
-                  (throw 'found data))
-                nil)
-              ewoc)
-    nil))
-
 (defun concordd-ewoc-find-message-node (ewoc message-id)
   "Find EWOC node containing message with MESSAGE-ID.
-Returns the node itself, not just the data."
-  (catch 'found
-    (ewoc-map (lambda (data)
-                (when (and (concordd-message-p data)
-                          (string= (concordd-message-id data) message-id))
-                  (throw 'found (ewoc-locate ewoc (point))))
-                nil)
-              ewoc)
-    nil))
+Returns the node itself, or nil if not found."
+  (let ((node (ewoc-nth ewoc 0)))
+    (while (and node
+                (let ((data (ewoc-data node)))
+                  (not (and (concordd-message-p data)
+                            (string= (concordd-message-id data) message-id)))))
+      (setq node (ewoc-next ewoc node)))
+    node))
+
+(defun concordd-ewoc-find-message (ewoc message-id)
+  "Find message data in EWOC with MESSAGE-ID.
+Returns the message struct, or nil if not found."
+  (when-let ((node (concordd-ewoc-find-message-node ewoc message-id)))
+    (ewoc-data node)))
 
 (defun concordd-ewoc-update-message (ewoc message-id update-fn)
   "Update message with MESSAGE-ID in EWOC using UPDATE-FN.
@@ -76,12 +69,13 @@ Assumes messages are generally in chronological order and searches from end."
 
 (defun concordd-ewoc-get-all-messages (ewoc)
   "Get all message structs from EWOC as a list."
-  (let (messages)
-    (ewoc-map (lambda (data)
-                (when (concordd-message-p data)
-                  (push data messages))
-                nil)
-              ewoc)
+  (let ((messages nil)
+        (node (ewoc-nth ewoc 0)))
+    (while node
+      (let ((data (ewoc-data node)))
+        (when (concordd-message-p data)
+          (push data messages)))
+      (setq node (ewoc-next ewoc node)))
     (nreverse messages)))
 
 (defun concordd-ewoc-goto-message (ewoc message-id)
