@@ -78,14 +78,15 @@
     candidates))
 
 ;;;###autoload
-(defun consult-concordd-guild ()
-  "Select a Discord guild using consult."
-  (interactive)
-  (message "Loading guilds...")
+(defun consult-concordd-guild (callback)
+  "Select a Discord guild using consult and call CALLBACK with guild-id.
+When called interactively, calls `consult-concordd-channel' with selected guild."
+  (interactive
+   (list (lambda (guild-id)
+           (consult-concordd-channel guild-id))))
   (concordd-list-guilds
    (lambda (result)
      (setq concordd-consult--guilds-cache (plist-get result :guilds))
-     (message "Guilds loaded: %d" (length concordd-consult--guilds-cache))
      (let* ((candidates (concordd-consult--guild-candidates))
             (selected (consult--read
                        candidates
@@ -95,11 +96,9 @@
                        :category 'concordd-guild
                        :annotate #'concordd-consult--guild-annotate
                        :lookup #'consult--lookup-cdr)))
-       (if selected
-           (let ((guild-id (plist-get selected :id)))
-             (message "Selected guild ID: %s" guild-id)
-             (consult-concordd-channel guild-id))
-         (message "No guild selected"))))))
+       (when selected
+         (let ((guild-id (plist-get selected :id)))
+           (funcall callback guild-id)))))))
 
 ;;; Channel Selection
 
@@ -114,14 +113,27 @@
            (parent-name (plist-get data :parent-name))
            (mention-count (plist-get data :mention-count))
            (mentioned (plist-get data :mentioned))
+           (unread (plist-get data :unread))
            (message-count (plist-get data :message-count))
            (parts '()))
+      ;; Add unread indicator
+      (when unread
+        (push (propertize "●" 'face 'error)
+              parts))
+      ;; Add mention count
+      (when (and mentioned (> mention-count 0))
+        (push (propertize (format "@%d" mention-count) 'face 'warning)
+              parts))
       ;; Add type information
       (push (propertize
              (pcase type
                (0 "text")
                (2 "voice")
                (5 "announce")
+               (8 "news-thread")
+               (10 "pub-thread")
+               (11 "priv-thread")
+               (12 "stage")
                (15 "forum")
                (_ (format "type:%d" type)))
              'face 'font-lock-type-face)
@@ -130,10 +142,6 @@
       (when (and parent-id (not (string-empty-p parent-id)))
         (push (propertize (format "in:%s" (or parent-name "?"))
                           'face 'font-lock-keyword-face)
-              parts))
-      ;; Add mention count
-      (when (and mentioned (> mention-count 0))
-        (push (propertize (format "@%d" mention-count) 'face 'font-lock-warning-face)
               parts))
       ;; Add thread count for forum channels
       (when (and (= type 15) message-count (> message-count 0))
@@ -148,11 +156,15 @@
 (defun concordd-consult--channel-type-icon (type)
   "Get icon for channel TYPE."
   (pcase type
-    (0 "#")      ; Text
-    (2 "🔊")     ; Voice
-    (4 "📁")     ; Category
-    (5 "📢")     ; Announcement
-    (15 "💬")    ; Forum
+    (0 "#")       ; GuildText
+    (2 "🔊")      ; GuildVoice
+    (4 "📁")      ; GuildCategory
+    (5 "📢")      ; GuildAnnouncement
+    (8 "🧵")      ; GuildAnnouncementThread (news thread)
+    (10 "💬")     ; GuildPublicThread
+    (11 "💬")     ; GuildPrivateThread
+    (12 "🎙")     ; GuildStageVoice
+    (15 "💭")     ; GuildForum
     (_ "•")))
 
 (defun concordd-consult--channel-candidates (channels)
@@ -177,14 +189,8 @@
              (mentioned (eq (plist-get channel :mentioned) t))
              (mention-count (or (plist-get channel :mentionCount) 0))
              (message-count (or (plist-get channel :messageCount) 0))
-             ;; Add indicators
-             (prefix (concat
-                     (if mentioned "@ " "")
-                     (if unread "● " "")
-                     icon))
-             ;; Truncate long names to prevent overflow (same as threads)
-             (truncated-name (truncate-string-to-width name 50 nil nil "…"))
-             (display (format "%s%s" prefix truncated-name)))
+             ;; Clean display: just icon and name
+             (display (format "%s %s" icon name)))
         ;; Only show displayable channel types (not categories)
         (unless (= type 4)
           (push (cons display 
@@ -222,11 +228,10 @@
 (defun consult-concordd-channel (&optional guild-id)
   "Select a Discord channel using consult.
 If GUILD-ID is provided, show channels for that guild.
-Otherwise, prompt for guild first."
+Otherwise, prompt for guild first using `consult-concordd-browse'."
   (interactive)
   (if guild-id
       (progn
-        (message "Loading channels for guild %s..." guild-id)
         (concordd-list-channels
          guild-id
          (lambda (result)
@@ -251,9 +256,8 @@ Otherwise, prompt for guild first."
                    (let ((channel-id (plist-get selected :id))
                          (channel-name (plist-get selected :name))
                          (channel-type (plist-get selected :type)))
-                     (message "Selected channel: %s (type %s)" channel-name channel-type)
-                     (concordd-consult--open-channel channel-id channel-name channel-type guild-id))))))))
-    (consult-concordd-guild))))
+                     (concordd-consult--open-channel channel-id channel-name channel-type guild-id)))))))))
+    (consult-concordd-browse)))
 
 ;;; Forum Thread Selection
 
@@ -345,9 +349,9 @@ Otherwise, prompt for guild first."
 ;;;###autoload
 (defun consult-concordd-browse ()
   "Main entry point for Concordd consult navigation.
-Starts with guild selection."
+Starts with guild selection, then channel selection."
   (interactive)
-  (consult-concordd-guild))
+  (consult-concordd-guild #'consult-concordd-channel))
 
 ;;;###autoload
 (defun consult-concordd-dms ()
@@ -399,7 +403,6 @@ This is like `consult-concordd-channel' but sorted by last message time."
   (interactive)
   (if guild-id
       (progn
-        (message "Loading activity for guild %s..." guild-id)
         (concordd-list-channels
          guild-id
          (lambda (result)
@@ -426,21 +429,8 @@ This is like `consult-concordd-channel' but sorted by last message time."
                    (let ((channel-id (plist-get selected :id))
                          (channel-name (plist-get selected :name))
                          (channel-type (plist-get selected :type)))
-                     (concordd-consult--open-channel channel-id channel-name channel-type guild-id))))))))
-    (concordd-list-guilds
-     (lambda (result)
-       (let* ((guilds (plist-get result :guilds))
-              (guild (consult--read
-                      (mapcar (lambda (g)
-                                (cons (plist-get g :name) g))
-                              guilds)
-                      :prompt "Select Guild: "
-                      :category 'concordd-guild
-                      :sort nil
-                      :require-match t
-                      :lookup #'consult--lookup-cdr)))
-         (when guild
-           (consult-concordd-activity (plist-get guild :id)))))))))
+                     (concordd-consult--open-channel channel-id channel-name channel-type guild-id)))))))))
+    (consult-concordd-guild #'consult-concordd-activity)))
 
 ;;; Embark Integration
 
@@ -464,6 +454,47 @@ This is like `consult-concordd-channel' but sorted by last message time."
 
   (add-to-list 'embark-keymap-alist '(concordd-guild . embark-concordd-guild-map))
   (add-to-list 'embark-keymap-alist '(concordd-channel . embark-concordd-channel-map)))
+
+;;; Marginalia Integration
+
+(with-eval-after-load 'marginalia
+  (defun concordd-consult--marginalia-annotate-channel (cand)
+    "Marginalia annotation for concordd channel CAND."
+    (when-let ((data (cdr (assoc cand concordd-consult--channels-cache-alist))))
+      (let ((unread (plist-get data :unread))
+            (mentioned (plist-get data :mentioned))
+            (mention-count (plist-get data :mention-count))
+            (type (plist-get data :type))
+            (parent-name (plist-get data :parent-name)))
+        (marginalia--fields
+         ((when unread (propertize "●" 'face 'error)) :width 1 :face 'error)
+         ((when (and mentioned (> mention-count 0))
+            (propertize (format "@%d" mention-count) 'face 'warning))
+          :width 4 :face 'warning)
+         ((pcase type
+            (0 "text")
+            (2 "voice")
+            (5 "announce")
+            (8 "news-thread")
+            (10 "pub-thread")
+            (11 "priv-thread")
+            (12 "stage")
+            (15 "forum"))
+          :width 12 :face 'marginalia-type)
+         ((when parent-name (format "in:%s" parent-name))
+          :width 20 :face 'marginalia-documentation :truncate 20)))))
+  
+  ;; Add to marginalia-annotators alist
+  (add-to-list 'marginalia-annotators
+               '(concordd-channel concordd-consult--marginalia-annotate-channel builtin none))
+  (add-to-list 'marginalia-annotators
+               '(concordd-guild builtin none))
+  (add-to-list 'marginalia-annotators
+               '(concordd-thread builtin none))
+  (add-to-list 'marginalia-annotators
+               '(concordd-dm builtin none))
+  (add-to-list 'marginalia-annotators
+               '(concordd-activity concordd-consult--marginalia-annotate-channel builtin none)))
 
 (provide 'concordd-consult)
 ;;; concordd-consult.el ends here
