@@ -15,9 +15,11 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'url)
 ;; concordd-format is loaded on-demand for formatting
 (declare-function concordd-format-preprocess-mentions "concordd-format")
 (declare-function concordd-format-postprocess-mentions "concordd-format")
+(declare-function concordd-ui-v2-refresh "concordd-ui-v2")
 (require 'markdown-mode nil t)
 
 ;;; Customization
@@ -33,6 +35,27 @@
 When non-nil, don't repeat username for consecutive messages."
   :type 'boolean
   :group 'concordd)
+
+(defcustom concordd-message-show-images nil
+  "Whether to display attached images inline in messages.
+When non-nil, images are downloaded and displayed as small thumbnails."
+  :type 'boolean
+  :group 'concordd)
+
+(defcustom concordd-message-image-max-height 150
+  "Maximum height in pixels for inline image thumbnails."
+  :type 'integer
+  :group 'concordd)
+
+(defcustom concordd-message-image-max-width 300
+  "Maximum width in pixels for inline image thumbnails."
+  :type 'integer
+  :group 'concordd)
+
+;;; Variables
+
+(defvar concordd-message-image-cache (make-hash-table :test 'equal)
+  "Cache of downloaded images. Maps URL to image data.")
 
 ;;; Data Structures
 
@@ -149,9 +172,10 @@ Fields:
              (state (concordd-message-state message))
              (edited (concordd-message-edited-timestamp message))
              (reactions (concordd-message-reactions message))
+             (attachments (concordd-message-attachments message))
              (thread-id (concordd-message-thread-id message))
              (start-pos (point))
-             (show-header (or edited reactions thread-id
+             (show-header (or edited reactions thread-id attachments
                              (not concordd-message-group-by-author)
                              (not (equal author-id (plist-get state :prev-author-id))))))
         (when show-header
@@ -162,6 +186,8 @@ Fields:
         (concordd-message--insert-content
          (concordd-message-content message)
          (plist-get state :guild-id))
+        (when attachments
+          (concordd-message--format-attachments attachments))
         (when reactions
           (insert "\n" (concordd-message--format-reactions reactions)))
         (insert "\n")
@@ -200,6 +226,186 @@ REACTIONS is a list of plists with :emoji, :count, and :me keys."
                    '(:background "#2C2F33" :foreground "#99AAB5")))))
       reactions
       " "))))
+
+;;; Image Handling
+
+(defun concordd-message--is-image-url (url)
+  "Check if URL points to an image file."
+  (and url
+       (string-match-p "\\.\\(png\\|jpe?g\\|gif\\|webp\\|bmp\\)\\(?:\\?.*\\)?$"
+                      (downcase url))))
+
+(defun concordd-message--download-image (url callback)
+  "Download image from URL and call CALLBACK with image data.
+If image is in cache, use cached version. Otherwise download async."
+  (if-let ((cached (gethash url concordd-message-image-cache)))
+      (funcall callback cached)
+    (url-retrieve
+     url
+     (lambda (status callback url)
+       (if (plist-get status :error)
+           (message "Failed to download image: %s" url)
+         (goto-char (point-min))
+         (when (re-search-forward "\n\n" nil t)
+           (let ((image-data (buffer-substring (point) (point-max))))
+             (puthash url image-data concordd-message-image-cache)
+             (funcall callback image-data)))))
+     (list callback url)
+     t)))
+
+(defun concordd-message--create-image-thumbnail (image-data)
+  "Create a thumbnail image from IMAGE-DATA."
+  (when image-data
+    (let ((img (create-image image-data nil t)))
+      (when img
+        (let* ((size (image-size img t))
+               (width (car size))
+               (height (cdr size))
+               (scale-w (/ (float concordd-message-image-max-width) width))
+               (scale-h (/ (float concordd-message-image-max-height) height))
+               (scale (min scale-w scale-h 1.0)))
+          (create-image image-data nil t
+                       :max-width concordd-message-image-max-width
+                       :max-height concordd-message-image-max-height
+                       :scale scale))))))
+
+(defun concordd-message--filename-from-url (url)
+  "Extract filename from URL, stripping query parameters."
+  (when url
+    (let* ((path (url-filename (url-generic-parse-url url)))
+           (filename (if (string-match "/\\([^/]+\\)$" path)
+                        (match-string 1 path)
+                      "unknown")))
+      ;; Strip query parameters from filename
+      (if (string-match "\\([^?]+\\)" filename)
+          (match-string 1 filename)
+        filename))))
+
+(defun concordd-message--insert-attachment (attachment)
+  "Insert ATTACHMENT into buffer.
+ATTACHMENT can be either a URL string or a plist.
+If it's an image and images are enabled, display inline thumbnail.
+Otherwise, show a link."
+  (let* ((url (if (stringp attachment)
+                  attachment
+                (plist-get attachment :url)))
+         (filename (if (stringp attachment)
+                      (concordd-message--filename-from-url attachment)
+                    (or (plist-get attachment :filename)
+                        (concordd-message--filename-from-url url))))
+         (content-type (unless (stringp attachment)
+                        (plist-get attachment :contentType)))
+         (is-image (or (concordd-message--is-image-url url)
+                      (and content-type
+                           (string-match-p "^image/" content-type)))))
+    (if (and is-image concordd-message-show-images)
+        (concordd-message--insert-image-attachment url filename)
+      (concordd-message--insert-link-attachment url filename))))
+
+(defun concordd-message--insert-image-attachment (url filename)
+  "Insert image attachment from URL with FILENAME as thumbnail."
+  ;; Check if image is already in cache
+  (if-let ((cached (gethash url concordd-message-image-cache)))
+      ;; Image in cache - insert immediately
+      (if-let ((img (concordd-message--create-image-thumbnail cached)))
+          (let ((img-start (point)))
+            (insert-image img)
+            (insert " ")
+            (put-text-property img-start (point) 'concordd-image-url url))
+        ;; Failed to create thumbnail - show as link
+        (insert (propertize (format "[Attachment: %s]" filename)
+                           'face 'link
+                           'concordd-attachment-url url
+                           'help-echo (format "URL: %s" url)))
+        (insert " "))
+    ;; Not in cache - show placeholder and download in background
+    (insert (propertize (format "[Image: %s]" filename)
+                       'face 'link
+                       'concordd-image-url url
+                       'help-echo "Downloading... refresh to see image"))
+    (insert " ")
+    ;; Start download in background (will be cached for next refresh)
+    (concordd-message--download-image url #'ignore)))
+
+(defun concordd-message--insert-link-attachment (url filename)
+  "Insert attachment as clickable link with URL and FILENAME."
+  (insert (propertize (format "[Attachment: %s]" filename)
+                     'face 'link
+                     'concordd-attachment-url url
+                     'help-echo (format "URL: %s" url)))
+  (insert " "))
+
+(defun concordd-message--format-attachments (attachments)
+  "Format ATTACHMENTS list for display.
+Returns nil if no attachments or if images shouldn't be shown."
+  (when (and attachments (> (length attachments) 0))
+    (let ((start (point)))
+      (insert "\n")
+      (dolist (attachment attachments)
+        (concordd-message--insert-attachment attachment))
+      (insert "\n"))))
+
+;;; Image Preview
+
+(defun concordd-message-preview-image-at-point ()
+  "Preview the image at point in a separate buffer."
+  (interactive)
+  (when-let* ((url (or (get-text-property (point) 'concordd-image-url)
+                      (get-text-property (point) 'concordd-attachment-url)))
+              (is-image (concordd-message--is-image-url url)))
+    (concordd-message--download-image
+     url
+     (lambda (image-data)
+       (let ((buf (get-buffer-create "*Concordd Image Preview*")))
+         (with-current-buffer buf
+           (let ((inhibit-read-only t))
+             (erase-buffer)
+             (if-let ((img (create-image image-data nil t)))
+                 (progn
+                   (insert-image img)
+                   (insert "\n\n")
+                   (insert (propertize url 'face 'link))
+                   (goto-char (point-min)))
+               (insert (propertize "Failed to create image from data\n\n" 'face 'error))
+               (insert (propertize url 'face 'link)))
+             (special-mode)
+             (local-set-key (kbd "q") 'quit-window)))
+         (pop-to-buffer buf))))))
+
+;;; Toggle Command
+
+(defun concordd-message-toggle-images ()
+  "Toggle inline image display in messages."
+  (interactive)
+  (setq concordd-message-show-images (not concordd-message-show-images))
+  (message "Inline images: %s" (if concordd-message-show-images "enabled" "disabled"))
+  ;; Refresh current buffer if in a concordd channel
+  (when (eq major-mode 'concordd-ui-v2-channel-mode)
+    (concordd-ui-v2-refresh)))
+
+;;; Cache Management
+
+;;;###autoload
+(defun concordd-message-clear-image-cache ()
+  "Clear the image cache to free memory.
+Useful if you've browsed many channels with images."
+  (interactive)
+  (let ((count (hash-table-count concordd-message-image-cache)))
+    (clrhash concordd-message-image-cache)
+    (message "Cleared %d cached images" count)))
+
+;;;###autoload
+(defun concordd-message-image-cache-info ()
+  "Show information about the image cache."
+  (interactive)
+  (let* ((count (hash-table-count concordd-message-image-cache))
+         (total-size 0))
+    (maphash (lambda (_url data)
+               (setq total-size (+ total-size (length data))))
+             concordd-message-image-cache)
+    (message "Image cache: %d images, ~%.1f MB"
+             count
+             (/ total-size 1048576.0))))
 
 (provide 'concordd-message)
 ;;; concordd-message.el ends here
