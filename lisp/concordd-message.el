@@ -20,6 +20,7 @@
 (declare-function concordd-format-preprocess-mentions "concordd-format")
 (declare-function concordd-format-postprocess-mentions "concordd-format")
 (declare-function concordd-ui-v2-refresh "concordd-ui-v2")
+(declare-function concordd-ewoc-find-message "concordd-ewoc")
 (require 'markdown-mode nil t)
 
 ;;; Customization
@@ -50,6 +51,32 @@ When non-nil, images are downloaded and displayed as small thumbnails."
 (defcustom concordd-message-image-max-width 300
   "Maximum width in pixels for inline image thumbnails."
   :type 'integer
+  :group 'concordd)
+
+(defcustom concordd-message-external-viewer-command "xdg-open %u"
+  "External command template for opening attachments.
+Placeholders:
+  %u - URL of the attachment
+  %f - Filename of the attachment
+Examples:
+  \"open %u\"          - macOS default opener
+  \"xdg-open %u\"      - Linux default opener
+  \"wget %u -O %f\"    - Download file"
+  :type 'string
+  :group 'concordd)
+
+(defcustom concordd-message-external-video-command nil
+  "External command template for opening video attachments.
+If non-nil, overrides `concordd-message-external-viewer-command` for videos.
+Placeholders:
+  %u - URL of the attachment
+  %f - Filename of the attachment
+Examples:
+  \"mpv %u\"           - Open with mpv
+  \"vlc %u\"           - Open with VLC
+  \"iina %u\"          - Open with IINA (macOS)"
+  :type '(choice (const :tag "Use general viewer command" nil)
+                 (string :tag "Video-specific command"))
   :group 'concordd)
 
 ;;; Variables
@@ -173,6 +200,7 @@ Fields:
              (edited (concordd-message-edited-timestamp message))
              (reactions (concordd-message-reactions message))
              (attachments (concordd-message-attachments message))
+             (embeds (concordd-message-embeds message))
              (thread-id (concordd-message-thread-id message))
              (start-pos (point))
              (show-header (or edited reactions thread-id attachments
@@ -187,7 +215,7 @@ Fields:
          (concordd-message-content message)
          (plist-get state :guild-id))
         (when attachments
-          (concordd-message--format-attachments attachments))
+          (concordd-message--format-attachments attachments embeds))
         (when reactions
           (insert "\n" (concordd-message--format-reactions reactions)))
         (insert "\n")
@@ -235,6 +263,29 @@ REACTIONS is a list of plists with :emoji, :count, and :me keys."
        (string-match-p "\\.\\(png\\|jpe?g\\|gif\\|webp\\|bmp\\)\\(?:\\?.*\\)?$"
                       (downcase url))))
 
+(defun concordd-message--is-video-content-type (content-type)
+  "Check if CONTENT-TYPE is a video."
+  (and content-type
+       (string-match-p "^video/" content-type)))
+
+(defun concordd-message--find-thumbnail-for-url (url embeds)
+  "Find thumbnail URL in EMBEDS that matches attachment URL.
+Returns the thumbnail URL if found, nil otherwise."
+  (when embeds
+    (catch 'found
+      (dolist (embed embeds)
+        ;; Check if embed's video/image URL matches attachment URL
+        (let ((embed-video-url (plist-get (plist-get embed :video) :url))
+              (embed-image-url (plist-get (plist-get embed :image) :url))
+              (embed-url (plist-get embed :url)))
+          ;; If this embed references our attachment, return its thumbnail
+          (when (or (and embed-video-url (string= embed-video-url url))
+                   (and embed-image-url (string= embed-image-url url))
+                   (and embed-url (string= embed-url url)))
+            (when-let ((thumbnail (plist-get embed :thumbnail)))
+              (throw 'found (plist-get thumbnail :url)))))))))
+
+
 (defun concordd-message--download-image (url callback)
   "Download image from URL and call CALLBACK with image data.
 If image is in cache, use cached version. Otherwise download async."
@@ -281,10 +332,10 @@ If image is in cache, use cached version. Otherwise download async."
           (match-string 1 filename)
         filename))))
 
-(defun concordd-message--insert-attachment (attachment)
-  "Insert ATTACHMENT into buffer.
+(defun concordd-message--insert-attachment (attachment embeds)
+  "Insert ATTACHMENT into buffer, using EMBEDS for thumbnail URLs.
 ATTACHMENT can be either a URL string or a plist.
-If it's an image and images are enabled, display inline thumbnail.
+If it's an image/video and images are enabled, display inline thumbnail.
 Otherwise, show a link."
   (let* ((url (if (stringp attachment)
                   attachment
@@ -297,10 +348,26 @@ Otherwise, show a link."
                         (plist-get attachment :contentType)))
          (is-image (or (concordd-message--is-image-url url)
                       (and content-type
-                           (string-match-p "^image/" content-type)))))
-    (if (and is-image concordd-message-show-images)
-        (concordd-message--insert-image-attachment url filename)
-      (concordd-message--insert-link-attachment url filename))))
+                           (string-match-p "^image/" content-type))))
+         (is-video (concordd-message--is-video-content-type content-type))
+         ;; Try to find thumbnail from embeds
+         (thumbnail-url (concordd-message--find-thumbnail-for-url url embeds)))
+    (cond
+     ;; Video with thumbnail
+     ((and is-video thumbnail-url concordd-message-show-images)
+      (concordd-message--insert-image-attachment thumbnail-url filename))
+     ;; Video without thumbnail
+     (is-video
+      (concordd-message--insert-link-attachment url filename "Video"))
+     ;; Image with embed thumbnail (prefer embed thumbnail for optimization)
+     ((and is-image thumbnail-url concordd-message-show-images)
+      (concordd-message--insert-image-attachment thumbnail-url filename))
+     ;; Regular image
+     ((and is-image concordd-message-show-images)
+      (concordd-message--insert-image-attachment url filename))
+     ;; Fallback to link
+     (t
+      (concordd-message--insert-link-attachment url filename)))))
 
 (defun concordd-message--insert-image-attachment (url filename)
   "Insert image attachment from URL with FILENAME as thumbnail."
@@ -311,66 +378,115 @@ Otherwise, show a link."
           (let ((img-start (point)))
             (insert-image img)
             (insert " ")
-            (put-text-property img-start (point) 'concordd-image-url url))
+            (put-text-property img-start (point) 'concordd-image-url url)
+            (put-text-property img-start (point) 'concordd-attachment-filename filename)
+            (put-text-property img-start (point) 'concordd-attachment-type "image"))
         ;; Failed to create thumbnail - show as link
         (insert (propertize (format "[Attachment: %s]" filename)
                            'face 'link
                            'concordd-attachment-url url
-                           'help-echo (format "URL: %s" url)))
+                           'concordd-attachment-filename filename
+                           'concordd-attachment-type "image"))
         (insert " "))
     ;; Not in cache - show placeholder and download in background
     (insert (propertize (format "[Image: %s]" filename)
                        'face 'link
                        'concordd-image-url url
-                       'help-echo "Downloading... refresh to see image"))
+                       'concordd-attachment-filename filename
+                       'concordd-attachment-type "image"))
     (insert " ")
     ;; Start download in background (will be cached for next refresh)
     (concordd-message--download-image url #'ignore)))
 
-(defun concordd-message--insert-link-attachment (url filename)
-  "Insert attachment as clickable link with URL and FILENAME."
-  (insert (propertize (format "[Attachment: %s]" filename)
-                     'face 'link
-                     'concordd-attachment-url url
-                     'help-echo (format "URL: %s" url)))
-  (insert " "))
+(defun concordd-message--insert-link-attachment (url filename &optional type)
+  "Insert attachment as clickable link with URL and FILENAME.
+TYPE is an optional label like \"Video\" or \"Attachment\"."
+  (let ((label (or type "Attachment")))
+    (insert (propertize (format "[%s: %s]" label filename)
+                       'face 'link
+                       'concordd-attachment-url url
+                       'concordd-attachment-filename filename
+                       'concordd-attachment-type (downcase (or type "attachment"))))
+    (insert " ")))
 
-(defun concordd-message--format-attachments (attachments)
-  "Format ATTACHMENTS list for display.
+(defun concordd-message--format-attachments (attachments embeds)
+  "Format ATTACHMENTS list for display, using EMBEDS for thumbnails.
 Returns nil if no attachments or if images shouldn't be shown."
   (when (and attachments (> (length attachments) 0))
     (let ((start (point)))
       (insert "\n")
       (dolist (attachment attachments)
-        (concordd-message--insert-attachment attachment))
+        (concordd-message--insert-attachment attachment embeds))
       (insert "\n"))))
 
-;;; Image Preview
+;;; External Viewer
+
+(defun concordd-message--expand-command-template (template url filename)
+  "Expand TEMPLATE replacing %u with URL and %f with FILENAME."
+  (let ((result template))
+    (setq result (replace-regexp-in-string "%u" (shell-quote-argument url) result t t))
+    (setq result (replace-regexp-in-string "%f" (shell-quote-argument filename) result t t))
+    result))
+
+(defun concordd-message-open-externally (url filename &optional attachment-type)
+  "Open URL with FILENAME using external viewer command.
+ATTACHMENT-TYPE can be \"video\", \"image\", etc. to select specific viewer."
+  (let* ((command-template (if (and (equal attachment-type "video")
+                                   concordd-message-external-video-command)
+                              concordd-message-external-video-command
+                            concordd-message-external-viewer-command))
+         (command (concordd-message--expand-command-template
+                  command-template
+                  url
+                  filename)))
+    (message "Opening: %s" filename)
+    (start-process-shell-command "concordd-viewer" nil command)))
+
+;;; Preview/Open Attachment
 
 (defun concordd-message-preview-image-at-point ()
-  "Preview the image at point in a separate buffer."
+  "Preview/open the attachment at point.
+For images: preview in Emacs buffer
+For videos/other files: open with external viewer"
   (interactive)
-  (when-let* ((url (or (get-text-property (point) 'concordd-image-url)
-                      (get-text-property (point) 'concordd-attachment-url)))
-              (is-image (concordd-message--is-image-url url)))
-    (concordd-message--download-image
-     url
-     (lambda (image-data)
-       (let ((buf (get-buffer-create "*Concordd Image Preview*")))
-         (with-current-buffer buf
-           (let ((inhibit-read-only t))
-             (erase-buffer)
-             (if-let ((img (create-image image-data nil t)))
-                 (progn
-                   (insert-image img)
-                   (insert "\n\n")
-                   (insert (propertize url 'face 'link))
-                   (goto-char (point-min)))
-               (insert (propertize "Failed to create image from data\n\n" 'face 'error))
-               (insert (propertize url 'face 'link)))
-             (special-mode)
-             (local-set-key (kbd "q") 'quit-window)))
-         (pop-to-buffer buf))))))
+  (let ((url (or (get-text-property (point) 'concordd-image-url)
+                (get-text-property (point) 'concordd-attachment-url)))
+        (filename (get-text-property (point) 'concordd-attachment-filename))
+        (att-type (get-text-property (point) 'concordd-attachment-type)))
+    (cond
+     ;; Image - preview in Emacs
+     ((and url (or (concordd-message--is-image-url url)
+                  (equal att-type "image")))
+      (concordd-message--preview-image-internal url))
+
+     ;; Video or other attachment - open externally
+     ((and url filename)
+      (concordd-message-open-externally url filename att-type))
+
+     ;; No attachment found
+     (t
+      (message "No attachment at point")))))
+
+(defun concordd-message--preview-image-internal (url)
+  "Preview image from URL in internal Emacs buffer."
+  (concordd-message--download-image
+   url
+   (lambda (image-data)
+     (let ((buf (get-buffer-create "*Concordd Image Preview*")))
+       (with-current-buffer buf
+         (let ((inhibit-read-only t))
+           (erase-buffer)
+           (if-let ((img (create-image image-data nil t)))
+               (progn
+                 (insert-image img)
+                 (insert "\n\n")
+                 (insert (propertize url 'face 'link))
+                 (goto-char (point-min)))
+             (insert (propertize "Failed to create image from data\n\n" 'face 'error))
+             (insert (propertize url 'face 'link)))
+           (special-mode)
+           (local-set-key (kbd "q") 'quit-window)))
+       (pop-to-buffer buf)))))
 
 ;;; Toggle Command
 
@@ -382,6 +498,30 @@ Returns nil if no attachments or if images shouldn't be shown."
   ;; Refresh current buffer if in a concordd channel
   (when (eq major-mode 'concordd-ui-v2-channel-mode)
     (concordd-ui-v2-refresh)))
+
+;;; Debug Helpers
+
+(defun concordd-message-inspect-at-point ()
+  "Inspect the raw message data at point."
+  (interactive)
+  (when-let ((msg-id (get-text-property (point) 'concordd-message-id)))
+    (let ((msg (concordd-ewoc-find-message concordd-message-ewoc msg-id)))
+      (when msg
+        (let ((buf (get-buffer-create "*Concordd Message Inspector*")))
+          (with-current-buffer buf
+            (let ((inhibit-read-only t))
+              (erase-buffer)
+              (insert (format "Message ID: %s\n\n" (concordd-message-id msg)))
+              (insert (format "Attachments (%d):\n" (length (concordd-message-attachments msg))))
+              (dolist (att (concordd-message-attachments msg))
+                (insert (format "  - %s\n" (pp-to-string att))))
+              (insert (format "\nEmbeds (%d):\n" (length (concordd-message-embeds msg))))
+              (dolist (emb (concordd-message-embeds msg))
+                (insert (format "  - %s\n" (pp-to-string emb))))
+              (goto-char (point-min)))
+            (special-mode)
+            (local-set-key (kbd "q") 'quit-window))
+          (pop-to-buffer buf))))))
 
 ;;; Cache Management
 
