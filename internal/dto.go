@@ -42,18 +42,60 @@ type Channel struct {
 
 // Message represents a Discord message
 type Message struct {
-	ID                string     `json:"id"`
-	ChannelID         string     `json:"channelId"`
-	GuildID           string     `json:"guildId,omitempty"`
-	Author            User       `json:"author"`
-	Content           string     `json:"content"`
-	Timestamp         time.Time  `json:"timestamp"`
-	EditedTimestamp   *time.Time `json:"editedTimestamp,omitempty"`
-	Attachments       []string   `json:"attachments"` // URLs for MVP
-	Embeds            int        `json:"embeds"`      // Count for MVP
-	Reactions         []Reaction `json:"reactions"`
-	ReferencedMessage *string    `json:"referencedMessage,omitempty"` // Message ID for replies
-	Mentions          []string   `json:"mentions"`                    // User IDs mentioned in message
+	ID                string       `json:"id"`
+	ChannelID         string       `json:"channelId"`
+	GuildID           string       `json:"guildId,omitempty"`
+	Author            User         `json:"author"`
+	Content           string       `json:"content"`
+	Timestamp         time.Time    `json:"timestamp"`
+	EditedTimestamp   *time.Time   `json:"editedTimestamp,omitempty"`
+	Attachments       []Attachment `json:"attachments"`
+	Embeds            []Embed      `json:"embeds"`
+	Reactions         []Reaction   `json:"reactions"`
+	ReferencedMessage *string      `json:"referencedMessage,omitempty"` // Message ID for replies
+	Mentions          []string     `json:"mentions"`                    // User IDs mentioned in message
+}
+
+// Attachment represents a message attachment
+type Attachment struct {
+	ID          string `json:"id"`
+	Filename    string `json:"filename"`
+	ContentType string `json:"contentType,omitempty"`
+	Size        uint64 `json:"size"`
+	URL         string `json:"url"`
+	ProxyURL    string `json:"proxyUrl,omitempty"`
+	Height      uint   `json:"height,omitempty"`
+	Width       uint   `json:"width,omitempty"`
+}
+
+// Embed represents a message embed
+type Embed struct {
+	Type      string          `json:"type,omitempty"`
+	URL       string          `json:"url,omitempty"`
+	Thumbnail *EmbedThumbnail `json:"thumbnail,omitempty"`
+	Image     *EmbedImage     `json:"image,omitempty"`
+	Video     *EmbedVideo     `json:"video,omitempty"`
+}
+
+// EmbedThumbnail represents an embed thumbnail
+type EmbedThumbnail struct {
+	URL    string `json:"url"`
+	Height uint   `json:"height,omitempty"`
+	Width  uint   `json:"width,omitempty"`
+}
+
+// EmbedImage represents an embed image
+type EmbedImage struct {
+	URL    string `json:"url"`
+	Height uint   `json:"height,omitempty"`
+	Width  uint   `json:"width,omitempty"`
+}
+
+// EmbedVideo represents an embed video
+type EmbedVideo struct {
+	URL    string `json:"url"`
+	Height uint   `json:"height,omitempty"`
+	Width  uint   `json:"width,omitempty"`
 }
 
 // Reaction represents a message reaction
@@ -161,9 +203,52 @@ func ToChannel(c discord.Channel) Channel {
 
 // ToMessage converts arikawa Message to IPC Message
 func ToMessage(m discord.Message, roles []discord.RoleID) Message {
-	attachments := make([]string, len(m.Attachments))
+	attachments := make([]Attachment, len(m.Attachments))
 	for i, a := range m.Attachments {
-		attachments[i] = a.URL
+		attachments[i] = Attachment{
+			ID:          a.ID.String(),
+			Filename:    a.Filename,
+			ContentType: a.ContentType,
+			Size:        a.Size,
+			URL:         string(a.URL),
+			ProxyURL:    string(a.Proxy),
+			Height:      a.Height,
+			Width:       a.Width,
+		}
+	}
+
+	embeds := make([]Embed, len(m.Embeds))
+	for i, e := range m.Embeds {
+		embed := Embed{
+			Type: string(e.Type),
+			URL:  string(e.URL),
+		}
+
+		if e.Thumbnail != nil {
+			embed.Thumbnail = &EmbedThumbnail{
+				URL:    string(e.Thumbnail.URL),
+				Height: e.Thumbnail.Height,
+				Width:  e.Thumbnail.Width,
+			}
+		}
+
+		if e.Image != nil {
+			embed.Image = &EmbedImage{
+				URL:    string(e.Image.URL),
+				Height: e.Image.Height,
+				Width:  e.Image.Width,
+			}
+		}
+
+		if e.Video != nil {
+			embed.Video = &EmbedVideo{
+				URL:    string(e.Video.URL),
+				Height: e.Video.Height,
+				Width:  e.Video.Width,
+			}
+		}
+
+		embeds[i] = embed
 	}
 
 	reactions := make([]Reaction, len(m.Reactions))
@@ -188,7 +273,7 @@ func ToMessage(m discord.Message, roles []discord.RoleID) Message {
 		Content:     m.Content,
 		Timestamp:   m.Timestamp.Time(),
 		Attachments: attachments,
-		Embeds:      len(m.Embeds),
+		Embeds:      embeds,
 		Reactions:   reactions,
 		Mentions:    mentions,
 	}
