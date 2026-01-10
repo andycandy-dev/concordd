@@ -103,21 +103,15 @@ See [ipc.org](./ipc.org) for complete API documentation with examples.
 
 ### Emacs
 
-A full-featured Emacs client is included:
+A full-featured Emacs client is included in the `lisp/` directory with support for:
+- Real-time message display with EWOC (incremental updates)
+- Image/video attachment rendering with thumbnails
+- Markdown formatting with syntax highlighting
+- @mention resolution (users, roles, channels)
+- Desktop notifications for DMs and mentions
+- Consult integration for fuzzy searching
 
-```bash
-# Copy discord.el to your Emacs load-path
-cp discord.el ~/.emacs.d/lisp/
-
-# Add to your init.el
-(add-to-list 'load-path "~/.emacs.d/lisp")
-(require 'discord)
-
-# Connect to daemon
-M-x discord-connect
-```
-
-See [discord.el](./discord.el) and [examples-discord-el.sh](./examples-discord-el.sh) for details.
+See the [Configuration](#configuration) section below for setup details.
 
 ### Testing
 
@@ -144,6 +138,180 @@ socat - UNIX-CONNECT:/tmp/concordd.sock
 {"jsonrpc":"2.0","id":1,"method":"ping"}
 {"jsonrpc":"2.0","id":2,"method":"listGuilds"}
 ```
+
+## Configuration
+
+### Emacs Client Setup
+
+#### Basic Configuration (Managed Daemon)
+
+Emacs automatically starts and manages the daemon:
+
+```elisp
+(use-package concordd
+  :load-path "~/path/to/concordd/lisp"
+  :config
+  ;; Your Discord token
+  (setq concordd-discord-token "YOUR_DISCORD_TOKEN"
+        concordd-socket-path "/tmp/concordd.sock")
+
+  ;; Connect (auto-starts daemon if needed)
+  (concordd-connect))
+```
+
+#### External Daemon Mode
+
+You manage the daemon separately (recommended for multiple Emacs sessions):
+
+```bash
+# Start daemon manually
+concordd --token YOUR_TOKEN --socket /tmp/concordd.sock
+```
+
+```elisp
+(use-package concordd
+  :load-path "~/path/to/concordd/lisp"
+  :config
+  ;; Don't set concordd-discord-token - daemon is external
+  (setq concordd-socket-path "/tmp/concordd.sock")
+  (concordd-connect))
+```
+
+#### Binary Download Options
+
+```elisp
+;; Option 1: Use system PATH (default)
+(setq concordd-binary-path nil)  ; Uses executable-find
+
+;; Option 2: Local file path
+(setq concordd-binary-path "/usr/local/bin/concordd")
+
+;; Option 3: Download from GitHub releases
+(setq concordd-binary-path
+      "https://github.com/USER/concordd/releases/download/v0.1.0/concordd-darwin-aarch64")
+```
+
+See [docs/DAEMON_MANAGEMENT.md](./docs/DAEMON_MANAGEMENT.md) for detailed daemon setup options.
+
+### Full Configuration Example
+
+```elisp
+(use-package concordd
+  :config
+  ;; Daemon connection
+  (setq concordd-discord-token "YOUR_DISCORD_TOKEN"
+        concordd-socket-path "/tmp/concordd.sock"
+
+        ;; Image rendering (default: nil)
+        concordd-message-show-images nil  ; Toggle with 'i'
+        concordd-message-image-max-height 150
+        concordd-message-image-max-width 300
+
+        ;; External viewers for attachments
+        concordd-message-external-viewer-command "xdg-open %u"     ; General files
+        concordd-message-external-video-command "mpv %u")          ; Videos only
+
+  ;; Keybindings
+  (map! :after concordd
+        :map concordd-ui-v2-channel-mode-map
+        :localleader
+        :desc "Compose"        "n"  #'concordd-ui-v2-compose
+        :desc "Reply"          "r"  #'concordd-ui-v2-compose-reply
+        :desc "Load older"     "p"  #'concordd-ui-v2-load-older
+        :desc "Refresh"        "gr" #'concordd-ui-v2-refresh)
+
+  (map! :leader
+        (:prefix ("d" . "concordd")
+         :desc "Connect"       "c" #'concordd-connect
+         :desc "Disconnect"    "d" #'concordd-disconnect
+         :desc "Browse"        "b" #'concordd-browse
+         :desc "DMs"           "m" #'concordd-open-dm
+         :desc "Toggle images" "i" #'concordd-message-toggle-images
+         :desc "Preview"       "v" #'concordd-message-preview-image-at-point)))
+
+;; Optional: Notifications
+(use-package concordd-notify
+  :after concordd
+  :config
+  (setq concordd-notify-tracked-guilds '("GUILD_ID_1" "GUILD_ID_2")
+        concordd-notify-track-dms t)
+  (concordd-notify-mode 1))
+```
+
+### Customization Options
+
+#### Message Display
+
+| Variable                            | Default  | Description                                 |
+|-------------------------------------|----------|---------------------------------------------|
+| `concordd-message-timestamp-align`  | `'right` | Timestamp alignment (`'left` or `'right`)   |
+| `concordd-message-group-by-author`  | `t`      | Group consecutive messages from same author |
+| `concordd-ui-v2-message-limit`      | `100`    | Max messages to keep in buffer              |
+| `concordd-ui-v2-load-message-count` | `50`     | Messages to load per request                |
+
+#### Image Rendering
+
+| Variable                            | Default | Description                   |
+|-------------------------------------|---------|-------------------------------|
+| `concordd-message-show-images`      | `nil`   | Show inline image thumbnails  |
+| `concordd-message-image-max-height` | `150`   | Max thumbnail height (pixels) |
+| `concordd-message-image-max-width`  | `300`   | Max thumbnail width (pixels)  |
+
+Toggle images: `M-x concordd-message-toggle-images` or bind to a key.
+
+#### External Viewers
+
+| Variable                                   | Default         | Description                                |
+|--------------------------------------------|-----------------|--------------------------------------------|
+| `concordd-message-external-viewer-command` | `"xdg-open %u"` | Command for opening attachments            |
+| `concordd-message-external-video-command`  | `nil`           | Video-specific command (overrides general) |
+
+**Placeholders:**
+- `%u` - URL of the attachment
+- `%f` - Filename of the attachment
+
+**Examples:**
+```elisp
+;; Linux
+(setq concordd-message-external-viewer-command "xdg-open %u"
+      concordd-message-external-video-command "mpv %u")
+
+;; macOS
+(setq concordd-message-external-viewer-command "open %u"
+      concordd-message-external-video-command "iina %u")
+
+;; Windows
+(setq concordd-message-external-viewer-command "start %u"
+      concordd-message-external-video-command "mpv.exe %u")
+```
+
+Press `v` on any attachment (image/video/PDF) to open it:
+- **Images**: Preview in Emacs buffer
+- **Videos**: Opens with video-specific command (or falls back to general viewer)
+- **Other files**: Opens with general viewer command
+
+#### Notifications
+
+| Variable                             | Default | Description                |
+|--------------------------------------|---------|----------------------------|
+| `concordd-notify-tracked-guilds`     | `nil`   | List of guild IDs to track |
+| `concordd-notify-track-dms`          | `nil`   | Track DM notifications     |
+| `concordd-notify-show-notifications` | `t`     | Show desktop notifications |
+| `concordd-notify-play-sound`         | `nil`   | Play sound on notification |
+
+### Security Best Practices
+
+- **Never commit** `concordd-discord-token` to version control
+- Use `auth-source` with encrypted files:
+  ```elisp
+  ;; In ~/.authinfo.gpg:
+  ;; machine discord.com login YOUR_EMAIL password YOUR_TOKEN
+
+  (setq concordd-discord-token
+        (auth-source-pick-first-password :host "discord.com"))
+  ```
+- Consider external daemon mode (token not in Emacs config)
+- Review [docs/DAEMON_MANAGEMENT.md](./docs/DAEMON_MANAGEMENT.md) for setup modes
 
 ## Architecture
 
@@ -223,12 +391,12 @@ This avoids duplication while maintaining modularity.
 
 ### Benefits vs Standalone Tools
 
-| Feature | Standalone CLI | concordd |
-|---------|---------------|----------|
-| Authentication | Every call | Once |
-| Message fetch | 5-30s each | Instant (cached) |
+| Feature           | Standalone CLI | concordd           |
+|-------------------|----------------|--------------------|
+| Authentication    | Every call     | Once               |
+| Message fetch     | 5-30s each     | Instant (cached)   |
 | Real-time updates | Manual polling | Push notifications |
-| Resource usage | High | Low |
+| Resource usage    | High           | Low                |
 
 ## License
 
