@@ -1,4 +1,7 @@
-// Package internal implements the JSON-RPC 2.0 protocol over Unix domain sockets
+// Package internal implements the concordd IPC server using JSON-RPC 2.0 over Unix domain sockets.
+//
+// The protocol follows the JSON-RPC 2.0 spec with line-delimited messages (each ending in \n).
+// Clients send requests and receive both responses (with matching ID) and notifications (no ID).
 package internal
 
 import (
@@ -6,7 +9,7 @@ import (
 	"fmt"
 )
 
-// Request represents a JSON-RPC 2.0 request
+// Request represents a JSON-RPC 2.0 request from client to daemon.
 type Request struct {
 	JSONRPC string           `json:"jsonrpc"`
 	ID      *json.RawMessage `json:"id,omitempty"` // Can be string, number, or null
@@ -14,7 +17,8 @@ type Request struct {
 	Params  json.RawMessage  `json:"params,omitempty"`
 }
 
-// Response represents a JSON-RPC 2.0 response
+// Response represents a JSON-RPC 2.0 response from daemon to client.
+// Either Result or Error will be set, never both.
 type Response struct {
 	JSONRPC string           `json:"jsonrpc"`
 	ID      *json.RawMessage `json:"id,omitempty"`
@@ -22,7 +26,8 @@ type Response struct {
 	Error   *Error           `json:"error,omitempty"`
 }
 
-// Notification represents a JSON-RPC 2.0 notification (no ID, no response expected)
+// Notification represents a JSON-RPC 2.0 notification (no ID, no response expected).
+// Used for push events like messageCreated, readStateUpdated, etc.
 type Notification struct {
 	JSONRPC string          `json:"jsonrpc"`
 	Method  string          `json:"method"`
@@ -36,7 +41,7 @@ type Error struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
-// Standard JSON-RPC error codes
+// Standard JSON-RPC 2.0 error codes per spec.
 const (
 	ParseError     = -32700
 	InvalidRequest = -32600
@@ -45,13 +50,13 @@ const (
 	InternalError  = -32603
 )
 
-// Custom error codes
+// Application-specific error codes (range -32000 to -32099 per spec).
 const (
-	DiscordAPIError  = -32000
-	NotConnected     = -32001
-	PermissionDenied = -32002
-	ChannelNotFound  = -32003
-	GuildNotFound    = -32004
+	DiscordAPIError  = -32000 // Discord API returned an error
+	NotConnected     = -32001 // Gateway connection not established yet
+	PermissionDenied = -32002 // User lacks Discord permissions for action
+	ChannelNotFound  = -32003 // Channel ID not in cache or doesn't exist
+	GuildNotFound    = -32004 // Guild ID not in cache or user not a member
 )
 
 // NewError creates a new JSON-RPC error
@@ -76,7 +81,8 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("JSON-RPC error %d: %s", e.Code, e.Message)
 }
 
-// mustMarshal is a helper to marshal data for notifications
+// mustMarshal marshals data for notifications. Panics on marshal failure
+// since notification params should always be serializable DTOs.
 func mustMarshal(v interface{}) json.RawMessage {
 	data, err := json.Marshal(v)
 	if err != nil {

@@ -7,7 +7,8 @@ import (
 	"github.com/diamondburned/arikawa/v3/discord"
 )
 
-// User represents a Discord user
+// User represents a Discord user.
+// Roles are context-specific (e.g., from guild member or message author).
 type User struct {
 	ID            string   `json:"id"`
 	Username      string   `json:"username"`
@@ -25,7 +26,8 @@ type Guild struct {
 	OwnerID string `json:"ownerId"`
 }
 
-// Channel represents a Discord channel
+// Channel represents a Discord channel.
+// Unread/mentioned fields are populated from read state, not Discord API.
 type Channel struct {
 	ID              string `json:"id"`
 	GuildID         string `json:"guildId,omitempty"`
@@ -40,7 +42,9 @@ type Channel struct {
 	LastMessageID   string `json:"lastMessageId,omitempty"` // ID of last message in channel
 }
 
-// Message represents a Discord message
+// Message represents a Discord message.
+// Attachments include full metadata (ContentType, Size, etc.) for rendering.
+// Embeds may contain thumbnails for videos/images (if provided by Discord).
 type Message struct {
 	ID                string       `json:"id"`
 	ChannelID         string       `json:"channelId"`
@@ -56,7 +60,8 @@ type Message struct {
 	Mentions          []string     `json:"mentions"`                    // User IDs mentioned in message
 }
 
-// Attachment represents a message attachment
+// Attachment represents a message attachment.
+// Height/Width are zero for non-image attachments.
 type Attachment struct {
 	ID          string `json:"id"`
 	Filename    string `json:"filename"`
@@ -68,7 +73,8 @@ type Attachment struct {
 	Width       uint   `json:"width,omitempty"`
 }
 
-// Embed represents a message embed
+// Embed represents a message embed.
+// Discord provides these for linked content (YouTube, etc.) but NOT for direct video uploads.
 type Embed struct {
 	Type      string          `json:"type,omitempty"`
 	URL       string          `json:"url,omitempty"`
@@ -105,14 +111,16 @@ type Reaction struct {
 	Me    bool   `json:"me"` // Whether current user reacted
 }
 
-// ReadState represents channel read state
+// ReadState represents channel read state.
+// LastMessageID is the last message the user has acknowledged.
 type ReadState struct {
 	ChannelID     string `json:"channelId"`
 	LastMessageID string `json:"lastMessageId"`
 	MentionCount  int    `json:"mentionCount"`
 }
 
-// Member represents a guild member
+// Member represents a guild member.
+// Nick is empty if user hasn't set a server nickname.
 type Member struct {
 	User     User     `json:"user"`
 	Nick     string   `json:"nick,omitempty"`     // Nickname in guild
@@ -131,7 +139,9 @@ type Role struct {
 	Mentionable bool   `json:"mentionable"` // Whether can be @mentioned
 }
 
-// Thread represents a Discord thread
+// Thread represents a Discord thread.
+// For forum channels, these are forum posts (threads with an initial message).
+// IsJoined indicates if current user has joined the thread.
 type Thread struct {
 	ID                  string   `json:"id"`
 	GuildID             string   `json:"guildId"`
@@ -159,9 +169,10 @@ type Tag struct {
 	EmojiName string `json:"emojiName,omitempty"`
 }
 
-// Helper functions to convert from arikawa types to IPC DTOs
+// Helper functions to convert from arikawa types to IPC DTOs.
 
-// ToUser converts arikawa User to IPC User
+// ToUser converts arikawa User to IPC User.
+// Roles should be from guild member or empty slice for non-guild contexts.
 func ToUser(u discord.User, roles []discord.RoleID) User {
 	roleIDs := make([]string, len(roles))
 	for i, r := range roles {
@@ -188,7 +199,8 @@ func ToGuild(g discord.Guild) Guild {
 	}
 }
 
-// ToChannel converts arikawa Channel to IPC Channel (unread info added separately)
+// ToChannel converts arikawa Channel to IPC Channel.
+// Unread/mentioned fields must be populated separately from read state.
 func ToChannel(c discord.Channel) Channel {
 	return Channel{
 		ID:            c.ID.String(),
@@ -201,7 +213,8 @@ func ToChannel(c discord.Channel) Channel {
 	}
 }
 
-// ToMessage converts arikawa Message to IPC Message
+// ToMessage converts arikawa Message to IPC Message.
+// Includes full attachment metadata and embed data for client rendering.
 func ToMessage(m discord.Message, roles []discord.RoleID) Message {
 	attachments := make([]Attachment, len(m.Attachments))
 	for i, a := range m.Attachments {
@@ -324,7 +337,8 @@ func ToRole(r discord.Role) Role {
 	}
 }
 
-// ToThread converts arikawa Channel (thread) to IPC Thread
+// ToThread converts arikawa Channel (thread) to IPC Thread.
+// isJoined must be checked separately (threads don't include membership in channel data).
 func ToThread(c discord.Channel, isJoined bool) Thread {
 	thread := Thread{
 		ID:       c.ID.String(),

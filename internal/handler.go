@@ -8,13 +8,15 @@ import (
 	"github.com/diamondburned/arikawa/v3/discord"
 )
 
-// Handler handles JSON-RPC requests
+// Handler routes JSON-RPC methods to their implementations.
+// Discord methods are registered after SetDiscordClient is called.
 type Handler struct {
 	methods map[string]MethodFunc
 	discord *DiscordClient
 }
 
-// MethodFunc is a function that handles a specific method
+// MethodFunc handles a specific JSON-RPC method.
+// Returns result data or an error (automatically wrapped in JSON-RPC Error).
 type MethodFunc func(params json.RawMessage) (interface{}, error)
 
 // NewHandler creates a new handler
@@ -30,7 +32,8 @@ func NewHandler() *Handler {
 	return h
 }
 
-// SetDiscordClient sets the Discord client for the handler
+// SetDiscordClient sets the Discord client and registers all Discord-dependent methods.
+// Called after gateway connection is established.
 func (h *Handler) SetDiscordClient(dc *DiscordClient) {
 	h.discord = dc
 
@@ -82,14 +85,15 @@ func (h *Handler) handlePing(params json.RawMessage) (interface{}, error) {
 	}, nil
 }
 
-// handleGetCurrentUser handles the getCurrentUser method
+// handleGetCurrentUser returns the authenticated user's ID.
+// Returns error if called before gateway READY event.
 func (h *Handler) handleGetCurrentUser(params json.RawMessage) (interface{}, error) {
 	if h.discord == nil {
 		return nil, NewError(InternalError, "Discord client not initialized")
 	}
-	
+
 	userID := h.discord.currentUserID
-	
+
 	if !userID.IsValid() {
 		return nil, NewError(InternalError, "Current user not available yet")
 	}
@@ -152,7 +156,9 @@ func (h *Handler) handleListDMs(params json.RawMessage) (interface{}, error) {
 	}, nil
 }
 
-// handleGetMessages handles the getMessages method
+// handleGetMessages fetches message history with optional pagination.
+// First call per channel may be slow (fetches from API). Subsequent calls are instant (cached).
+// Use 'before' param to load older messages.
 func (h *Handler) handleGetMessages(params json.RawMessage) (interface{}, error) {
 	var req struct {
 		ChannelID string `json:"channelId"`
@@ -363,7 +369,9 @@ func (h *Handler) handleGetReadState(params json.RawMessage) (interface{}, error
 	}, nil
 }
 
-// handleGetGuildMembers handles the getGuildMembers method
+// handleGetGuildMembers returns cached members from gateway events.
+// For guilds >75 members, may only include recently active users.
+// Use requestGuildMembers to fetch specific user data for mention resolution.
 func (h *Handler) handleGetGuildMembers(params json.RawMessage) (interface{}, error) {
 	var req struct {
 		GuildID string `json:"guildId"`
@@ -413,7 +421,9 @@ func (h *Handler) handleGetGuildRoles(params json.RawMessage) (interface{}, erro
 	}, nil
 }
 
-// handleRequestGuildMembers handles the requestGuildMembers method
+// handleRequestGuildMembers requests specific member data via gateway.
+// Members arrive asynchronously and are cached. No immediate return of member data.
+// Use this when mentions need resolution but users aren't in getGuildMembers cache.
 func (h *Handler) handleRequestGuildMembers(params json.RawMessage) (interface{}, error) {
 	var req struct {
 		GuildID string   `json:"guildId"`
@@ -448,7 +458,8 @@ func (h *Handler) handleRequestGuildMembers(params json.RawMessage) (interface{}
 	}, nil
 }
 
-// handleListThreads handles the listThreads method
+// handleListThreads returns active threads from state cache.
+// For forum channels, these are the forum posts.
 func (h *Handler) handleListThreads(params json.RawMessage) (interface{}, error) {
 	var req struct {
 		ChannelID string `json:"channelId"`
@@ -473,7 +484,8 @@ func (h *Handler) handleListThreads(params json.RawMessage) (interface{}, error)
 	}, nil
 }
 
-// handleCreateThread handles the createThread method
+// handleCreateThread creates a thread from a message or standalone.
+// If messageId is empty, creates a standalone thread (ANNOUNCEMENT_THREAD or PUBLIC_THREAD).
 func (h *Handler) handleCreateThread(params json.RawMessage) (interface{}, error) {
 	var req struct {
 		ChannelID           string `json:"channelId"`
@@ -510,7 +522,8 @@ func (h *Handler) handleCreateThread(params json.RawMessage) (interface{}, error
 	}, nil
 }
 
-// handleCreateForumPost handles the createForumPost method
+// handleCreateForumPost creates a new post in a forum channel.
+// Returns both the thread and the initial message.
 func (h *Handler) handleCreateForumPost(params json.RawMessage) (interface{}, error) {
 	var req struct {
 		ChannelID string   `json:"channelId"`
