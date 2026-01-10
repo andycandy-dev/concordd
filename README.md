@@ -6,15 +6,15 @@ A Discord IPC daemon that exposes a JSON-RPC 2.0 interface over Unix domain sock
 
 **concordd** (formerly `discordo-daemon`) is a standalone daemon that:
 - Maintains a persistent Discord connection via the Gateway API
-- Exposes 12 API methods for reading/writing Discord data
-- Broadcasts 7 real-time event types to all connected clients
+- Exposes 21 API methods for reading/writing Discord data
+- Broadcasts 10 real-time event types to all connected clients
 - Caches messages for instant retrieval
 - Provides a clean JSON-RPC 2.0 interface over Unix sockets
 
 ## Features
 
-- ✅ **Complete Discord API**: 12 methods covering guilds, channels, messages, read state, members, and roles
-- ✅ **Real-time events**: Push notifications for new messages, edits, deletes, and more
+- ✅ **Complete Discord API**: 21 methods covering guilds, channels, messages, threads, forums, read state, members, and roles
+- ✅ **Real-time events**: 10 push notification types for messages, threads, and connection status
 - ✅ **Message caching**: First fetch is slow, subsequent fetches are instant
 - ✅ **Message pagination**: Load older messages with `before` parameter
 - ✅ **Edit/delete messages**: Full CRUD operations for your own messages
@@ -74,28 +74,23 @@ export DISCORDO_TOKEN="your_discord_token"
 
 ### Methods (Client → Daemon)
 
-1. **ping** - Health check
-2. **listGuilds** - Get all guilds
-3. **listChannels** - Get channels in a guild
-4. **getMessages** - Get message history (with pagination)
-5. **sendMessage** - Send a message
-6. **replyToMessage** - Reply to a message
-7. **editMessage** - Edit your own message
-8. **deleteMessage** - Delete your own message
-9. **markAsRead** - Mark channel as read
-10. **getReadState** - Get read state for a channel
-11. **getGuildMembers** - Get guild members (for @mentions)
-12. **getGuildRoles** - Get guild roles (for @role mentions)
+Core operations (21 total):
+- **Connection**: ping, getCurrentUser
+- **Discovery**: listGuilds, listChannels, listDMs
+- **Messages**: getMessages, sendMessage, replyToMessage, editMessage, deleteMessage
+- **Read State**: markAsRead, getReadState
+- **Members/Roles**: getGuildMembers, requestGuildMembers, getGuildRoles
+- **Threads**: listThreads, createThread, joinThread, leaveThread, archiveThread
+- **Forums**: createForumPost, getForumTags
 
 ### Events (Daemon → Client)
 
-1. **messageCreated** - New message received
-2. **messageUpdated** - Message edited
-3. **messageDeleted** - Message deleted
-4. **readStateUpdated** - Read state changed
-5. **connectionStatusChanged** - Discord connection status
-6. **guildCreated** - Joined a new guild
-7. **channelCreated** - New channel created
+Real-time notifications (10 total):
+- **Messages**: messageCreated, messageUpdated, messageDeleted
+- **Read State**: readStateUpdated
+- **Guild/Channels**: guildCreated, channelCreated
+- **Threads**: threadCreated, threadUpdated, threadDeleted
+- **Connection**: connectionStatusChanged
 
 See [ipc.org](./ipc.org) for complete API documentation with examples.
 
