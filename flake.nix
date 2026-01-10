@@ -65,6 +65,12 @@
             echo "  go run .        - Run concordd"
             echo "  nix build       - Build with Nix"
             echo "  nix run         - Run with Nix"
+            echo "  nix run .#docs  - View API documentation"
+            echo ""
+            echo "Documentation:"
+            echo "  nix run .#docs -- ./internal          - View internal package docs"
+            echo "  nix run .#docs -- ./internal.Handler  - View Handler type"
+            echo "  nix run .#docs -- -all ./internal     - View all package docs"
             echo ""
             echo "Usage:"
             echo "  concordd start              - Start the daemon"
@@ -77,6 +83,15 @@
           default = {
             type = "app";
             program = "${self.packages.${system}.default}/bin/concordd";
+          };
+
+          docs = {
+            type = "app";
+            program = toString (pkgs.writeShellScript "concordd-docs" ''
+              cd ${./.}
+              export GOROOT=${pkgs.go}/share/go
+              ${pkgs.go}/bin/go doc "$@"
+            '');
           };
         };
       }
